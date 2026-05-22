@@ -1,3 +1,4 @@
+import os
 import sys
 import warnings
 import argparse
@@ -30,6 +31,7 @@ from downloader import download_track, SKIP
 from tagger import tag_file
 from recognizer import record_and_identify, identify_file
 from search import search_tracks, search_albums
+from language import detect_language
 
 console = Console()
 
@@ -296,7 +298,7 @@ def print_album_results(albums: list):
     ))
 
 
-def run_song_search(query: str, output_dir: str, quality: str, browser: str = None):
+def run_song_search(query: str, output_dir: str, quality: str, browser: str = None, organize: bool = False):
     check_credentials()
 
     if not query:
@@ -345,10 +347,19 @@ def run_song_search(query: str, output_dir: str, quality: str, browser: str = No
     console.print()
     step_print(2, 3, f"Selected  {label_rich}")
     console.print()
-    step_print(3, 3, f"Downloading to [bright_cyan]{output_dir}[/bright_cyan]")
+
+    if organize:
+        lang = detect_language(track["artist"], track["title"])
+        track_dir = os.path.join(output_dir, lang)
+        console.print(f"  [dim]Language:[/dim] [bold bright_magenta]{lang}[/bold bright_magenta]")
+        console.print()
+    else:
+        track_dir = output_dir
+
+    step_print(3, 3, f"Downloading to [bright_cyan]{track_dir}[/bright_cyan]")
     console.print()
 
-    path = download_track(track, output_dir, quality, cookies_browser=browser)
+    path = download_track(track, track_dir, quality, cookies_browser=browser)
     if path == SKIP:
         console.print(f"  [bold yellow]o[/bold yellow]  {label_rich}  [dim yellow](already exists, skipped)[/dim yellow]")
     elif path is None:
@@ -358,11 +369,11 @@ def run_song_search(query: str, output_dir: str, quality: str, browser: str = No
         console.print(f"  [bold bright_green]v[/bold bright_green]  {label_rich}")
 
     console.print()
-    console.print(f"  [dim]Saved to[/dim] [bright_cyan]{output_dir}[/bright_cyan]")
+    console.print(f"  [dim]Saved to[/dim] [bright_cyan]{track_dir}[/bright_cyan]")
     console.print()
 
 
-def run_album_search(query: str, output_dir: str, quality: str, browser: str = None):
+def run_album_search(query: str, output_dir: str, quality: str, browser: str = None, organize: bool = False):
     check_credentials()
 
     if not query:
@@ -455,16 +466,23 @@ def run_album_search(query: str, output_dir: str, quality: str, browser: str = N
                 f"[dim] - [/dim]"
                 f"[bright_white]{track['title'][:40]}[/bright_white]"
             )
-            path = download_track(track, output_dir, quality, cookies_browser=browser)
+            if organize:
+                lang = detect_language(track["artist"], track["title"])
+                track_dir = os.path.join(output_dir, lang)
+                lang_tag = f"  [dim magenta]{lang}[/dim magenta]"
+            else:
+                track_dir = output_dir
+                lang_tag = ""
+            path = download_track(track, track_dir, quality, cookies_browser=browser)
             if path == SKIP:
-                console.print(f"  [bold yellow]o[/bold yellow]  {label_rich}  [dim yellow](skipped)[/dim yellow]")
+                console.print(f"  [bold yellow]o[/bold yellow]  {label_rich}{lang_tag}  [dim yellow](skipped)[/dim yellow]")
                 status = "skip"
             elif path is None:
-                console.print(f"  [bold bright_red]x[/bold bright_red]  {label_rich}  [dim red](failed)[/dim red]")
+                console.print(f"  [bold bright_red]x[/bold bright_red]  {label_rich}{lang_tag}  [dim red](failed)[/dim red]")
                 status = "fail"
             else:
                 tag_file(path, track)
-                console.print(f"  [bold bright_green]v[/bold bright_green]  {label_rich}")
+                console.print(f"  [bold bright_green]v[/bold bright_green]  {label_rich}{lang_tag}")
                 status = "ok"
             progress.advance(task)
             return status
@@ -496,7 +514,7 @@ def run_album_search(query: str, output_dir: str, quality: str, browser: str = N
     console.print()
 
 
-def run_shazam(output_dir: str, quality: str, browser: str = None, duration: int = 10, file: str = None):
+def run_shazam(output_dir: str, quality: str, browser: str = None, duration: int = 10, file: str = None, organize: bool = False):
     if file:
         step_print(1, 3, f"Identifying from file  [dim]{file}[/dim]")
         try:
@@ -547,6 +565,8 @@ def run_shazam(output_dir: str, quality: str, browser: str = None, duration: int
         console.print()
         return
 
+    lang = detect_language(track["artist"], track["title"]) if organize else None
+
     color = "bright_magenta"
     t = Table(show_header=False, box=box.SIMPLE, padding=(0, 1))
     t.add_column(style=f"bold {color}", min_width=10)
@@ -555,6 +575,8 @@ def run_shazam(output_dir: str, quality: str, browser: str = None, duration: int
     t.add_row("*  Artist", track["artist"])
     if track.get("album"):
         t.add_row("◉  Album", track["album"])
+    if lang:
+        t.add_row("🌐  Language", f"[bold bright_magenta]{lang}[/bold bright_magenta]")
     if track.get("spotify_url"):
         t.add_row("⊕  Spotify", f"[dim]{track['spotify_url']}[/dim]")
 
@@ -595,7 +617,8 @@ def run_shazam(output_dir: str, quality: str, browser: str = None, duration: int
     step_print(2, 3, f"Matched  [bold bright_magenta]{track['artist']}[/bold bright_magenta]  –  [bold bright_white]{track['title']}[/bold bright_white]")
     console.print()
 
-    step_print(3, 3, f"Downloading to [bright_cyan]{output_dir}[/bright_cyan]")
+    track_dir = os.path.join(output_dir, lang) if lang else output_dir
+    step_print(3, 3, f"Downloading to [bright_cyan]{track_dir}[/bright_cyan]")
     console.print()
 
     label_rich = (
@@ -604,7 +627,7 @@ def run_shazam(output_dir: str, quality: str, browser: str = None, duration: int
         f"[bright_white]{track['title'][:40]}[/bright_white]"
     )
 
-    path = download_track(track, output_dir, quality, cookies_browser=browser)
+    path = download_track(track, track_dir, quality, cookies_browser=browser)
 
     if path == SKIP:
         console.print(f"  [bold yellow]o[/bold yellow]  {label_rich}  [dim yellow](already exists, skipped)[/dim yellow]")
@@ -615,11 +638,11 @@ def run_shazam(output_dir: str, quality: str, browser: str = None, duration: int
         console.print(f"  [bold bright_green]v[/bold bright_green]  {label_rich}  [dim green](saved)[/dim green]")
 
     console.print()
-    console.print(f"  [dim]Saved to[/dim] [bright_cyan]{output_dir}[/bright_cyan]")
+    console.print(f"  [dim]Saved to[/dim] [bright_cyan]{track_dir}[/bright_cyan]")
     console.print()
 
 
-def run(url: str, output_dir: str, quality: str, jobs, browser: str = None):
+def run(url: str, output_dir: str, quality: str, jobs, browser: str = None, organize: bool = False):
     if is_youtube_url(url):
         step_print(1, 3, f"Fetching from YouTube  [dim]{url}[/dim]")
         try:
@@ -682,17 +705,25 @@ def run(url: str, output_dir: str, quality: str, jobs, browser: str = None):
             if jobs == 1:
                 progress.update(task, description=f"  [bright_cyan]>[/bright_cyan]  {label_plain[:52]}")
 
-            path = download_track(track, output_dir, quality, cookies_browser=browser)
+            if organize:
+                lang = detect_language(track["artist"], track["title"])
+                track_dir = os.path.join(output_dir, lang)
+                lang_tag = f"  [dim magenta]{lang}[/dim magenta]"
+            else:
+                track_dir = output_dir
+                lang_tag = ""
+
+            path = download_track(track, track_dir, quality, cookies_browser=browser)
 
             if path == SKIP:
-                console.print(f"  [bold yellow]o[/bold yellow]  {label_rich}  [dim yellow](skipped)[/dim yellow]")
+                console.print(f"  [bold yellow]o[/bold yellow]  {label_rich}{lang_tag}  [dim yellow](skipped)[/dim yellow]")
                 status = "skip"
             elif path is None:
-                console.print(f"  [bold bright_red]x[/bold bright_red]  {label_rich}  [dim red](failed)[/dim red]")
+                console.print(f"  [bold bright_red]x[/bold bright_red]  {label_rich}{lang_tag}  [dim red](failed)[/dim red]")
                 status = "fail"
             else:
                 tag_file(path, track)
-                console.print(f"  [bold bright_green]v[/bold bright_green]  {label_rich}")
+                console.print(f"  [bold bright_green]v[/bold bright_green]  {label_rich}{lang_tag}")
                 status = "ok"
 
             progress.advance(task)
@@ -800,6 +831,11 @@ def main():
         metavar="SECS",
         help="How many seconds to record when using --shazam (default: 10)",
     )
+    parser.add_argument(
+        "--organize",
+        action="store_true",
+        help="Sort downloads into Language/Artist - Title.mp3 subfolders",
+    )
 
     args = parser.parse_args()
 
@@ -811,11 +847,12 @@ def main():
                 browser=args.browser,
                 duration=args.listen_duration,
                 file=args.shazam_file,
+                organize=args.organize,
             )
             return
 
         if args.url:
-            run(args.url, args.output, args.quality, args.jobs, browser=args.browser)
+            run(args.url, args.output, args.quality, args.jobs, browser=args.browser, organize=args.organize)
             return
 
         # Interactive loop — keeps running until ESC at the main prompt
@@ -830,15 +867,15 @@ def main():
                 cmd   = parts[0].lower()
                 query = parts[1].strip() if len(parts) > 1 else ""
                 if cmd == "\\shazam":
-                    run_shazam(args.output, args.quality, browser=args.browser, duration=args.listen_duration)
+                    run_shazam(args.output, args.quality, browser=args.browser, duration=args.listen_duration, organize=args.organize)
                 elif cmd == "\\song":
-                    run_song_search(query, args.output, args.quality, browser=args.browser)
+                    run_song_search(query, args.output, args.quality, browser=args.browser, organize=args.organize)
                 elif cmd == "\\album":
-                    run_album_search(query, args.output, args.quality, browser=args.browser)
+                    run_album_search(query, args.output, args.quality, browser=args.browser, organize=args.organize)
                 else:
                     console.print(f"\n  [bold red]Unknown command:[/bold red] {cmd}\n")
             else:
-                run(url, args.output, args.quality, args.jobs, browser=args.browser)
+                run(url, args.output, args.quality, args.jobs, browser=args.browser, organize=args.organize)
 
             console.print(Rule(style="dim bright_black"))
             console.print()
