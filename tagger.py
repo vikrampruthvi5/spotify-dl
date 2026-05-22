@@ -1,5 +1,7 @@
 import requests
-from mutagen.id3 import ID3, TIT2, TPE1, TALB, TDRC, TRCK, APIC, ID3NoHeaderError
+from mutagen.id3 import (
+    ID3, TIT2, TPE1, TALB, TDRC, TRCK, APIC, TXXX, ID3NoHeaderError
+)
 
 
 def tag_file(filepath: str, track: dict) -> bool:
@@ -30,6 +32,24 @@ def tag_file(filepath: str, track: dict) -> bool:
                     )
             except Exception:
                 pass
+
+        # Spotify audio features — stored as TXXX custom frames
+        for feat, desc in [
+            ("danceability",     "DANCEABILITY"),
+            ("energy",           "ENERGY"),
+            ("valence",          "VALENCE"),
+            ("instrumentalness", "INSTRUMENTALNESS"),
+        ]:
+            val = track.get(feat)
+            if val is not None:
+                tags.delall(f"TXXX:{desc}")
+                tags.add(TXXX(encoding=3, desc=desc, text=str(round(float(val), 3))))
+
+        # Spotify's own tempo estimate (not from audio analysis)
+        if track.get("spotify_bpm") is not None:
+            tags.delall("TXXX:SPOTIFY_BPM")
+            tags.add(TXXX(encoding=3, desc="SPOTIFY_BPM",
+                          text=str(round(float(track["spotify_bpm"]), 2))))
 
         tags.save(filepath)
         return True

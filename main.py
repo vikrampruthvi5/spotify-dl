@@ -34,6 +34,12 @@ from search import search_tracks, search_albums
 from language import detect_language
 from monitor import ResourceColumn, run_monitor
 from watcher import PlaylistWatcher, load_watched, add_playlist, remove_playlist, update_playlist
+from analyzer import analyze_and_tag, analyze_directory
+from rekordbox import export_rekordbox_xml
+from dupes import find_duplicates
+from scanner import scan_library
+from crate import build_crate
+from setcheck import check_set
 
 console = Console()
 
@@ -76,6 +82,12 @@ _SLASH_COMMANDS = [
     ("\\organize",   "Toggle Language/ subfolder sorting"),
     ("\\monitor",    "Live CPU / RAM / temperature display"),
     ("\\configure",  "Manage watched playlists & auto-download"),
+    ("\\analyze",    "Detect BPM + key for untagged MP3s in library"),
+    ("\\rekordbox",  "Export library to Rekordbox XML for Pioneer CDJs"),
+    ("\\dupes",      "Find duplicate tracks in your library"),
+    ("\\scan",       "Find tracks with missing BPM, key, or art"),
+    ("\\crate",      "Build a filtered DJ crate and save as M3U"),
+    ("\\setcheck",   "Check which Spotify playlist tracks you already have"),
 ]
 
 
@@ -374,7 +386,10 @@ def run_song_search(query: str, output_dir: str, quality: str, browser: str = No
         console.print(f"  [bold bright_red]x[/bold bright_red]  {label_rich}  [dim red](failed)[/dim red]")
     else:
         tag_file(path, track)
-        console.print(f"  [bold bright_green]v[/bold bright_green]  {label_rich}")
+        analysis = analyze_and_tag(path)
+        bpm_tag  = (f"  [dim cyan]{analysis['bpm']:.0f}bpm {analysis.get('camelot', '')}[/dim cyan]"
+                    if analysis else "")
+        console.print(f"  [bold bright_green]v[/bold bright_green]  {label_rich}{bpm_tag}")
 
     console.print()
     console.print(f"  [dim]Saved to[/dim] [bright_cyan]{track_dir}[/bright_cyan]")
@@ -499,7 +514,11 @@ def run_album_search(query: str, output_dir: str, quality: str, browser: str = N
                     status = "fail"
                 else:
                     tag_file(path, track)
-                    console.print(f"  [bold bright_green]v[/bold bright_green]  {label_rich}{lang_tag}")
+                    analysis = analyze_and_tag(path)
+                    bpm_tag  = (f"  [dim cyan]{analysis['bpm']:.0f}bpm"
+                                f" {analysis.get('camelot', '')}[/dim cyan]"
+                                if analysis else "")
+                    console.print(f"  [bold bright_green]v[/bold bright_green]  {label_rich}{lang_tag}{bpm_tag}")
                     status = "ok"
                 progress.advance(task)
                 return status
@@ -664,7 +683,10 @@ def run_shazam(output_dir: str, quality: str, browser: str = None, duration: int
         console.print(f"  [bold bright_red]x[/bold bright_red]  {label_rich}  [dim red](download failed)[/dim red]")
     else:
         tag_file(path, track)
-        console.print(f"  [bold bright_green]v[/bold bright_green]  {label_rich}  [dim green](saved)[/dim green]")
+        analysis = analyze_and_tag(path)
+        bpm_tag  = (f"  [dim cyan]{analysis['bpm']:.0f}bpm {analysis.get('camelot', '')}[/dim cyan]"
+                    if analysis else "")
+        console.print(f"  [bold bright_green]v[/bold bright_green]  {label_rich}{bpm_tag}  [dim green](saved)[/dim green]")
 
     console.print()
     console.print(f"  [dim]Saved to[/dim] [bright_cyan]{track_dir}[/bright_cyan]")
@@ -761,7 +783,11 @@ def run(url: str, output_dir: str, quality: str, jobs, browser: str = None, orga
                     status = "fail"
                 else:
                     tag_file(path, track)
-                    console.print(f"  [bold bright_green]v[/bold bright_green]  {label_rich}{lang_tag}")
+                    analysis = analyze_and_tag(path)
+                    bpm_tag  = (f"  [dim cyan]{analysis['bpm']:.0f}bpm"
+                                f" {analysis.get('camelot', '')}[/dim cyan]"
+                                if analysis else "")
+                    console.print(f"  [bold bright_green]v[/bold bright_green]  {label_rich}{lang_tag}{bpm_tag}")
                     status = "ok"
 
                 progress.advance(task)
@@ -830,6 +856,319 @@ def run(url: str, output_dir: str, quality: str, jobs, browser: str = None, orga
             border_style="yellow",
             box=box.DOUBLE_EDGE,
         ))
+    console.print()
+
+
+def run_analyze(output_dir: str):
+    console.print()
+    directory = _prompt_simple("⚡  Directory to analyze", default=output_dir)
+    if not directory:
+        console.print("\n  [dim]Cancelled.[/dim]\n")
+        return
+    if not os.path.isdir(directory):
+        console.print(f"\n  [bold red]Not a directory:[/bold red] {directory}\n")
+        return
+
+    force_str = _prompt_simple("⚡  Force re-analyze already-tagged tracks? [y/N]", default="n")
+    force     = (force_str or "n").strip().lower() in ("y", "yes")
+
+    console.print()
+
+    with Progress(
+        SpinnerColumn(spinner_name="dots2", style="bright_cyan"),
+        TextColumn("[bold bright_white]{task.description}"),
+        BarColumn(bar_width=28, style="bright_blue", complete_style="bright_green"),
+        MofNCompleteColumn(),
+        TimeElapsedColumn(),
+        console=console,
+        transient=False,
+    ) as progress:
+        task = progress.add_task("[bright_cyan]Analyzing...[/bright_cyan]", total=None)
+        analyzed = skipped = 0
+        for fpath, result in analyze_directory(directory, force=force):
+            fname = os.path.basename(fpath)[:52]
+            if result:
+                analyzed += 1
+                bpm_tag = f"[dim cyan]{result['bpm']:.0f}bpm {result.get('camelot','')}[/dim cyan]"
+                console.print(f"  [bold bright_green]v[/bold bright_green]  {fname}  {bpm_tag}")
+            else:
+                skipped += 1
+            progress.advance(task)
+        progress.update(task, description="[bright_green]Done![/bright_green]")
+
+    console.print()
+    console.print(
+        f"  [bold bright_green]{analyzed}[/bold bright_green] analyzed  "
+        f"[dim]{skipped}[/dim] skipped (already tagged or failed)"
+    )
+    console.print()
+
+
+def run_rekordbox(output_dir: str):
+    console.print()
+    directory = _prompt_simple("◉  Library directory to scan", default=output_dir)
+    if not directory:
+        console.print("\n  [dim]Cancelled.[/dim]\n")
+        return
+    if not os.path.isdir(directory):
+        console.print(f"\n  [bold red]Not a directory:[/bold red] {directory}\n")
+        return
+
+    default_xml = os.path.join(os.path.expanduser("~"), "Desktop", "rekordbox.xml")
+    xml_path = _prompt_simple("◉  Output XML path", default=default_xml)
+    if not xml_path:
+        console.print("\n  [dim]Cancelled.[/dim]\n")
+        return
+
+    console.print(f"\n  [dim]Scanning {directory}...[/dim]")
+    count = export_rekordbox_xml(directory, xml_path)
+
+    if count == 0:
+        console.print("\n  [yellow]No MP3 files found.[/yellow]\n")
+        return
+
+    console.print(Panel(
+        f"  Exported [bold bright_yellow]{count}[/bold bright_yellow] tracks\n"
+        f"  [dim]Saved to[/dim] [bright_cyan]{xml_path}[/bright_cyan]\n\n"
+        f"  [dim]Import in Rekordbox:  File → Import Library → XML[/dim]",
+        title="[bold bright_green]  ◉  Rekordbox Export Complete  ◉  [/bold bright_green]",
+        border_style="bright_green",
+        box=box.DOUBLE_EDGE,
+        padding=(1, 2),
+    ))
+    console.print()
+
+
+def run_dupes(output_dir: str):
+    console.print()
+    directory = _prompt_simple("♻  Directory to scan", default=output_dir)
+    if not directory:
+        console.print("\n  [dim]Cancelled.[/dim]\n")
+        return
+    if not os.path.isdir(directory):
+        console.print(f"\n  [bold red]Not a directory:[/bold red] {directory}\n")
+        return
+
+    console.print(f"\n  [dim]Scanning for duplicates...[/dim]")
+    result = find_duplicates(directory)
+    tag_groups  = result["by_tags"]
+    hash_groups = result["by_hash"]
+
+    total_groups = len(tag_groups) + len(hash_groups)
+    if total_groups == 0:
+        console.print("\n  [bold bright_green]No duplicates found![/bold bright_green]\n")
+        return
+
+    if hash_groups:
+        console.print()
+        console.print(f"  [bold bright_red]{len(hash_groups)}[/bold bright_red] identical file group(s) (byte-for-byte copies):")
+        for group in hash_groups:
+            t = Table(show_header=False, box=box.SIMPLE, padding=(0, 2))
+            t.add_column(style="dim", min_width=6)
+            t.add_column(style="bright_white")
+            for j, fpath in enumerate(group, 1):
+                size_kb = os.path.getsize(fpath) // 1024
+                label   = "[bold bright_red]COPY[/bold bright_red]" if j > 1 else "[dim]ORIG[/dim]"
+                t.add_row(label, f"{fpath}  [dim]({size_kb} KB)[/dim]")
+            console.print(t)
+
+    if tag_groups:
+        console.print()
+        console.print(f"  [bold yellow]{len(tag_groups)}[/bold yellow] same-title group(s) (same artist + title tags):")
+        for group in tag_groups[:10]:   # cap at 10 to avoid flooding
+            t = Table(show_header=False, box=box.SIMPLE, padding=(0, 2))
+            t.add_column(style="dim", min_width=6)
+            t.add_column(style="bright_white")
+            for j, fpath in enumerate(group, 1):
+                size_kb = os.path.getsize(fpath) // 1024
+                t.add_row(f"#{j}", f"{fpath}  [dim]({size_kb} KB)[/dim]")
+            console.print(t)
+        if len(tag_groups) > 10:
+            console.print(f"  [dim]... and {len(tag_groups) - 10} more groups[/dim]")
+
+    console.print()
+
+
+def run_scan(output_dir: str):
+    console.print()
+    directory = _prompt_simple("🔍  Directory to scan", default=output_dir)
+    if not directory:
+        console.print("\n  [dim]Cancelled.[/dim]\n")
+        return
+    if not os.path.isdir(directory):
+        console.print(f"\n  [bold red]Not a directory:[/bold red] {directory}\n")
+        return
+
+    console.print(f"\n  [dim]Scanning tags...[/dim]")
+    issues = scan_library(directory)
+
+    if not issues:
+        console.print("\n  [bold bright_green]All tracks have complete tags![/bold bright_green]\n")
+        return
+
+    t = Table(
+        show_header=True,
+        header_style="bold bright_white on blue",
+        box=box.HEAVY_HEAD,
+        border_style="bright_blue",
+        row_styles=["", "on grey11"],
+        padding=(0, 1),
+    )
+    t.add_column("File",    style="bright_white",  max_width=46)
+    t.add_column("Missing", style="bold bright_red", max_width=40)
+
+    for item in issues[:50]:
+        fname = os.path.basename(item["path"])
+        t.add_row(fname[:44], ", ".join(item["missing"]))
+
+    console.print(Panel(
+        t,
+        title=f"[bold bright_red]  !!  {len(issues)} tracks with missing tags  [/bold bright_red]",
+        border_style="bright_red",
+        box=box.DOUBLE_EDGE,
+    ))
+    if len(issues) > 50:
+        console.print(f"  [dim]... and {len(issues) - 50} more[/dim]")
+    console.print(f"\n  [dim]Tip: run [bold]\\analyze[/bold] to fill in missing BPM + Key tags.[/dim]\n")
+
+
+def run_crate(output_dir: str):
+    console.print()
+    directory = _prompt_simple("♬  Library directory", default=output_dir)
+    if not directory:
+        console.print("\n  [dim]Cancelled.[/dim]\n")
+        return
+    if not os.path.isdir(directory):
+        console.print(f"\n  [bold red]Not a directory:[/bold red] {directory}\n")
+        return
+
+    bpm_str    = _prompt_simple("♬  BPM range  (e.g. 120-130, or blank for any)")
+    key_filter = _prompt_simple("♬  Key / Camelot  (e.g. 8A, Am, or blank for any)")
+    energy_str = _prompt_simple("♬  Min energy  (0.0–1.0, or blank for any)")
+
+    bpm_min = bpm_max = None
+    if bpm_str:
+        parts = bpm_str.strip().split("-")
+        try:
+            bpm_min = float(parts[0].strip())
+            bpm_max = float(parts[1].strip()) if len(parts) > 1 else bpm_min + 10
+        except (ValueError, IndexError):
+            console.print("\n  [bold red]Invalid BPM range. Use format: 120-130[/bold red]\n")
+            return
+
+    energy_min = None
+    if energy_str:
+        try:
+            energy_min = float(energy_str.strip())
+        except ValueError:
+            console.print("\n  [bold red]Invalid energy value.[/bold red]\n")
+            return
+
+    default_m3u = os.path.join(os.path.expanduser("~"), "Desktop", "dj_crate.m3u")
+    m3u_path = _prompt_simple("♬  Save M3U to", default=default_m3u)
+    if not m3u_path:
+        console.print("\n  [dim]Cancelled.[/dim]\n")
+        return
+
+    console.print(f"\n  [dim]Filtering library...[/dim]")
+    matches = build_crate(
+        directory,
+        bpm_min=bpm_min, bpm_max=bpm_max,
+        key=key_filter or None,
+        energy_min=energy_min,
+        output_m3u=m3u_path,
+    )
+
+    if not matches:
+        console.print("\n  [yellow]No tracks matched the filters.[/yellow]\n")
+        return
+
+    console.print(Panel(
+        f"  [bold bright_yellow]{len(matches)}[/bold bright_yellow] tracks matched\n"
+        f"  [dim]Saved to[/dim] [bright_cyan]{m3u_path}[/bright_cyan]\n\n"
+        f"  [dim]Open in Rekordbox, VirtualDJ, or any DJ software that reads M3U.[/dim]",
+        title="[bold bright_green]  ♬  Crate Built  ♬  [/bold bright_green]",
+        border_style="bright_green",
+        box=box.DOUBLE_EDGE,
+        padding=(1, 2),
+    ))
+    console.print()
+
+
+def run_setcheck(output_dir: str):
+    check_credentials()
+    console.print()
+    url = _prompt_simple("✓  Spotify playlist URL")
+    if not url:
+        console.print("\n  [dim]Cancelled.[/dim]\n")
+        return
+
+    console.print(f"\n  [dim]Fetching playlist from Spotify...[/dim]")
+    try:
+        info = get_spotify_info(url)
+    except Exception as e:
+        console.print(f"\n  [bold red]Error:[/bold red] {e}\n")
+        return
+
+    directory = _prompt_simple("✓  Local library directory", default=output_dir)
+    if not directory:
+        console.print("\n  [dim]Cancelled.[/dim]\n")
+        return
+
+    console.print(f"\n  [dim]Checking {info['total_tracks']} tracks against local library...[/dim]")
+    result  = check_set(info["tracks"], directory)
+    found   = result["found"]
+    missing = result["missing"]
+
+    color = "bright_green" if not missing else ("yellow" if missing else "bright_red")
+    summary = Table(show_header=False, box=None, padding=(0, 4))
+    summary.add_column(justify="center")
+    summary.add_column(justify="center")
+    summary.add_row(
+        f"[bold bright_green]Have locally[/bold bright_green]\n[bold bright_green]{len(found)}[/bold bright_green]",
+        f"[bold bright_red]Missing[/bold bright_red]\n[bold bright_red]{len(missing)}[/bold bright_red]",
+    )
+    console.print()
+    console.print(Panel(
+        Align.center(summary),
+        title=f"[bold {color}]  ✓  {info['name']}  [/bold {color}]",
+        border_style=color,
+        box=box.DOUBLE_EDGE,
+        padding=(1, 4),
+    ))
+
+    if missing:
+        console.print()
+        t = Table(
+            show_header=True,
+            header_style="bold bright_white on blue",
+            box=box.HEAVY_HEAD,
+            border_style="bright_red",
+            row_styles=["", "on grey11"],
+            padding=(0, 1),
+        )
+        t.add_column("#",      style="bold bright_yellow", width=4,  justify="right")
+        t.add_column("Artist", style="bright_cyan",        max_width=28)
+        t.add_column("Title",  style="bright_white",       max_width=40)
+        for i, tr in enumerate(missing[:30], 1):
+            t.add_row(str(i), tr["artist"][:26], tr["title"][:38])
+        if len(missing) > 30:
+            t.add_row("...", f"[dim]and {len(missing) - 30} more[/dim]", "")
+        console.print(Panel(
+            t,
+            title="[bold bright_red]  !!  Missing Tracks  [/bold bright_red]",
+            border_style="bright_red",
+            box=box.DOUBLE_EDGE,
+        ))
+
+        console.print()
+        dl_str = _prompt_simple(
+            f"✓  Download all {len(missing)} missing tracks now? [y/N]", default="n"
+        )
+        if dl_str and dl_str.strip().lower() in ("y", "yes"):
+            run(url, directory, DEFAULT_QUALITY, None, organize=False)
+            return
+
     console.print()
 
 
@@ -1160,6 +1499,24 @@ def main():
                     continue
                 elif cmd == "\\configure":
                     run_configure(watcher, args.output)
+                    continue
+                elif cmd == "\\analyze":
+                    run_analyze(args.output)
+                    continue
+                elif cmd == "\\rekordbox":
+                    run_rekordbox(args.output)
+                    continue
+                elif cmd == "\\dupes":
+                    run_dupes(args.output)
+                    continue
+                elif cmd == "\\scan":
+                    run_scan(args.output)
+                    continue
+                elif cmd == "\\crate":
+                    run_crate(args.output)
+                    continue
+                elif cmd == "\\setcheck":
+                    run_setcheck(args.output)
                     continue
                 elif cmd == "\\shazam":
                     run_shazam(args.output, args.quality, browser=args.browser, duration=args.listen_duration, organize=organize)

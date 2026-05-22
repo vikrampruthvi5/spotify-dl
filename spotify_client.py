@@ -30,7 +30,39 @@ def _track_dict(track: dict, album_name: str, cover_url, year: str) -> dict:
         "cover_url":    cover_url,
         "year":         year,
         "track_number": track.get("track_number", 0),
+        # audio feature fields — populated by _apply_audio_features()
+        "danceability":     None,
+        "energy":           None,
+        "valence":          None,
+        "instrumentalness": None,
+        "spotify_bpm":      None,
     }
+
+
+def _fetch_audio_features(sp, tracks: list) -> dict:
+    """Batch-fetch Spotify audio features. Returns {track_id: features_dict}."""
+    ids = [t["id"] for t in tracks if t.get("id")]
+    if not ids:
+        return {}
+    features = {}
+    try:
+        for i in range(0, len(ids), 50):
+            for feat in (sp.audio_features(ids[i : i + 50]) or []):
+                if feat:
+                    features[feat["id"]] = feat
+    except Exception:
+        pass
+    return features
+
+
+def _apply_audio_features(tracks: list, features: dict):
+    for t in tracks:
+        feat = features.get(t.get("id", "")) or {}
+        t["danceability"]     = feat.get("danceability")
+        t["energy"]           = feat.get("energy")
+        t["valence"]          = feat.get("valence")
+        t["instrumentalness"] = feat.get("instrumentalness")
+        t["spotify_bpm"]      = feat.get("tempo")
 
 
 def get_playlist_info(url: str) -> dict:
@@ -51,6 +83,8 @@ def get_playlist_info(url: str) -> dict:
             year = (track["album"].get("release_date") or "")[:4]
             tracks.append(_track_dict(track, track["album"]["name"], cover_url, year))
         results = sp.next(results) if results.get("next") else None
+
+    _apply_audio_features(tracks, _fetch_audio_features(sp, tracks))
 
     cover_images = playlist.get("images", [])
     return {
@@ -80,6 +114,8 @@ def get_album_info(url: str) -> dict:
             tracks.append(_track_dict(item, album["name"], cover_url, year))
         results = sp.next(results) if results.get("next") else None
 
+    _apply_audio_features(tracks, _fetch_audio_features(sp, tracks))
+
     return {
         "type": "album",
         "name": album["name"],
@@ -100,6 +136,7 @@ def get_track_info(url: str) -> dict:
     cover_url = images[0]["url"] if images else None
     year = (track["album"].get("release_date") or "")[:4]
     t = _track_dict(track, track["album"]["name"], cover_url, year)
+    _apply_audio_features([t], _fetch_audio_features(sp, [t]))
 
     return {
         "type": "track",
