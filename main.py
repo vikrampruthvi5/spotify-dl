@@ -21,6 +21,7 @@ from prompt_toolkit import PromptSession
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.styles import Style as PtStyle
 from prompt_toolkit.formatted_text import HTML
+from prompt_toolkit.completion import Completer, Completion
 
 from config import DEFAULT_OUTPUT_DIR, DEFAULT_QUALITY, SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET
 from spotify_client import get_info as get_spotify_info
@@ -28,6 +29,7 @@ from youtube import get_info as get_yt_info, is_youtube_url
 from downloader import download_track, SKIP
 from tagger import tag_file
 from recognizer import record_and_identify, identify_file
+from search import search_tracks, search_albums
 
 console = Console()
 
@@ -63,9 +65,30 @@ _PT_STYLE = PtStyle.from_dict({
     "bottom-toolbar": "bg:ansiblue fg:ansiwhite bold",
 })
 
+_SLASH_COMMANDS = [
+    ("\\shazam", "Listen via mic & identify song"),
+    ("\\song",   "Search track by title"),
+    ("\\album",  "Browse album & download tracks"),
+]
+
 _URL_TOOLBAR = HTML(
-    "  <b>ENTER</b>  download      <b>ESC</b>  exit  "
+    "  <b>\\</b>  commands      <b>ENTER</b>  download      <b>ESC</b>  exit  "
 )
+
+
+class _SlashCompleter(Completer):
+    def get_completions(self, document, complete_event):
+        text = document.text_before_cursor
+        if not text.startswith("\\"):
+            return
+        for cmd, meta in _SLASH_COMMANDS:
+            if cmd.startswith(text):
+                yield Completion(
+                    cmd,
+                    start_position=-len(text),
+                    display=cmd,
+                    display_meta=meta,
+                )
 
 
 def get_url_interactive() -> str:
@@ -79,15 +102,64 @@ def get_url_interactive() -> str:
         style=_PT_STYLE,
         key_bindings=kb,
         bottom_toolbar=_URL_TOOLBAR,
+        completer=_SlashCompleter(),
+        complete_while_typing=True,
     )
     try:
         result = session.prompt(
-            HTML("<ansicyan><b>  ♪  Spotify or YouTube URL  ›  </b></ansicyan>")
+            HTML("<ansicyan><b>  ♪  URL or \\command  ›  </b></ansicyan>")
         )
     except (KeyboardInterrupt, EOFError):
         result = None
 
     return result.strip() if result else None
+
+
+def _prompt_simple(msg: str, default: str = "") -> str:
+    kb = KeyBindings()
+
+    @kb.add("escape")
+    def _quit(event):
+        event.app.exit(result=None)
+
+    session = PromptSession(style=_PT_STYLE, key_bindings=kb)
+    try:
+        result = session.prompt(
+            HTML(f"<ansicyan><b>  {msg}  ›  </b></ansicyan>"),
+            default=default,
+        )
+    except (KeyboardInterrupt, EOFError):
+        result = None
+    return result.strip() if result else None
+
+
+def _ms_to_mmss(ms: int) -> str:
+    s = ms // 1000
+    return f"{s // 60}:{s % 60:02d}"
+
+
+def _parse_track_selection(text: str, total: int):
+    text = text.strip().lower()
+    if not text or text == "all":
+        return list(range(total))
+    indices = set()
+    for part in text.split(","):
+        part = part.strip()
+        if "-" in part:
+            a, _, b = part.partition("-")
+            try:
+                lo, hi = int(a.strip()), int(b.strip())
+                indices.update(range(max(1, lo) - 1, min(total, hi)))
+            except ValueError:
+                pass
+        else:
+            try:
+                n = int(part)
+                if 1 <= n <= total:
+                    indices.add(n - 1)
+            except ValueError:
+                pass
+    return sorted(indices)
 
 
 def check_credentials():
@@ -168,6 +240,260 @@ def step_print(n: int, total: int, msg: str):
         f"[bold bright_black]][/bold bright_black]  "
         f"[bright_white]{msg}[/bright_white]"
     )
+
+
+def print_search_results(results: list):
+    t = Table(
+        show_header=True,
+        header_style="bold bright_white on blue",
+        box=box.HEAVY_HEAD,
+        border_style="bright_blue",
+        row_styles=["", "on grey11"],
+        padding=(0, 1),
+    )
+    t.add_column("#",      style="bold bright_yellow", width=4,  justify="right")
+    t.add_column("Artist", style="bright_cyan",        max_width=28)
+    t.add_column("Title",  style="bold bright_white",  max_width=38)
+    t.add_column("Album",  style="dim",                max_width=25)
+    t.add_column("Time",   style="dim",                width=6, justify="right")
+    for i, tr in enumerate(results, 1):
+        t.add_row(
+            str(i),
+            tr["artist"][:26],
+            tr["title"][:36],
+            tr["album"][:23],
+            _ms_to_mmss(tr.get("duration_ms", 0)),
+        )
+    console.print(Panel(
+        t,
+        title="[bold bright_blue]  ♬  Search Results  ♬  [/bold bright_blue]",
+        border_style="bright_blue",
+        box=box.DOUBLE_EDGE,
+    ))
+
+
+def print_album_results(albums: list):
+    t = Table(
+        show_header=True,
+        header_style="bold bright_white on blue",
+        box=box.HEAVY_HEAD,
+        border_style="bright_magenta",
+        row_styles=["", "on grey11"],
+        padding=(0, 1),
+    )
+    t.add_column("#",      style="bold bright_yellow", width=4,  justify="right")
+    t.add_column("Artist", style="bright_cyan",        max_width=28)
+    t.add_column("Album",  style="bold bright_white",  max_width=35)
+    t.add_column("Year",   style="dim",                width=6, justify="right")
+    t.add_column("Tracks", style="bright_yellow",      width=7, justify="right")
+    for i, al in enumerate(albums, 1):
+        t.add_row(str(i), al["artist"][:26], al["name"][:33], al["year"], str(al["total_tracks"]))
+    console.print(Panel(
+        t,
+        title="[bold bright_magenta]  ◉  Albums Found  ◉  [/bold bright_magenta]",
+        border_style="bright_magenta",
+        box=box.DOUBLE_EDGE,
+    ))
+
+
+def run_song_search(query: str, output_dir: str, quality: str, browser: str = None):
+    check_credentials()
+
+    if not query:
+        console.print()
+        query = _prompt_simple("♪  Search for a song")
+        if not query:
+            console.print("\n  [dim]Cancelled.[/dim]\n")
+            return
+
+    console.print()
+    step_print(1, 3, f"Searching Spotify  [dim]{query}[/dim]")
+
+    try:
+        results = search_tracks(query)
+    except Exception as e:
+        console.print(f"\n  [bold bright_red]!!  Search failed:[/bold bright_red] [red]{e}[/red]\n")
+        return
+
+    if not results:
+        console.print("\n  [yellow]No results found.[/yellow]\n")
+        return
+
+    console.print()
+    print_search_results(results)
+    console.print()
+
+    choice_str = _prompt_simple(f"♪  Pick a track (1–{len(results)})")
+    if not choice_str:
+        console.print("\n  [dim]Cancelled.[/dim]\n")
+        return
+
+    try:
+        choice = int(choice_str)
+        if not 1 <= choice <= len(results):
+            raise ValueError
+    except ValueError:
+        console.print("\n  [bold red]Invalid choice.[/bold red]\n")
+        return
+
+    track = results[choice - 1]
+    label_rich = (
+        f"[bright_cyan]{track['artist'][:30]}[/bright_cyan]"
+        f"[dim] - [/dim]"
+        f"[bright_white]{track['title'][:40]}[/bright_white]"
+    )
+    console.print()
+    step_print(2, 3, f"Selected  {label_rich}")
+    console.print()
+    step_print(3, 3, f"Downloading to [bright_cyan]{output_dir}[/bright_cyan]")
+    console.print()
+
+    path = download_track(track, output_dir, quality, cookies_browser=browser)
+    if path == SKIP:
+        console.print(f"  [bold yellow]o[/bold yellow]  {label_rich}  [dim yellow](already exists, skipped)[/dim yellow]")
+    elif path is None:
+        console.print(f"  [bold bright_red]x[/bold bright_red]  {label_rich}  [dim red](failed)[/dim red]")
+    else:
+        tag_file(path, track)
+        console.print(f"  [bold bright_green]v[/bold bright_green]  {label_rich}")
+
+    console.print()
+    console.print(f"  [dim]Saved to[/dim] [bright_cyan]{output_dir}[/bright_cyan]")
+    console.print()
+
+
+def run_album_search(query: str, output_dir: str, quality: str, browser: str = None):
+    check_credentials()
+
+    if not query:
+        console.print()
+        query = _prompt_simple("◉  Search for an album")
+        if not query:
+            console.print("\n  [dim]Cancelled.[/dim]\n")
+            return
+
+    console.print()
+    step_print(1, 4, f"Searching Spotify  [dim]{query}[/dim]")
+
+    try:
+        albums = search_albums(query)
+    except Exception as e:
+        console.print(f"\n  [bold bright_red]!!  Search failed:[/bold bright_red] [red]{e}[/red]\n")
+        return
+
+    if not albums:
+        console.print("\n  [yellow]No albums found.[/yellow]\n")
+        return
+
+    console.print()
+    print_album_results(albums)
+    console.print()
+
+    choice_str = _prompt_simple(f"◉  Pick an album (1–{len(albums)})")
+    if not choice_str:
+        console.print("\n  [dim]Cancelled.[/dim]\n")
+        return
+
+    try:
+        choice = int(choice_str)
+        if not 1 <= choice <= len(albums):
+            raise ValueError
+    except ValueError:
+        console.print("\n  [bold red]Invalid choice.[/bold red]\n")
+        return
+
+    album = albums[choice - 1]
+    console.print()
+    step_print(2, 4, f"Fetching tracks for  [bold bright_magenta]{album['name']}[/bold bright_magenta]")
+
+    try:
+        info = get_spotify_info(album["spotify_url"])
+    except Exception as e:
+        console.print(f"\n  [bold bright_red]!!  Failed:[/bold bright_red] [red]{e}[/red]\n")
+        return
+
+    console.print()
+    print_source_info(info)
+    console.print()
+    print_track_table(info["tracks"])
+    console.print()
+
+    sel_str = _prompt_simple("◉  Tracks to download  (all / 1 / 2-5 / 1,3,5)", default="all")
+    if sel_str is None:
+        console.print("\n  [dim]Cancelled.[/dim]\n")
+        return
+
+    indices = _parse_track_selection(sel_str, len(info["tracks"]))
+    if not indices:
+        console.print("\n  [yellow]No valid tracks selected.[/yellow]\n")
+        return
+
+    tracks = [info["tracks"][i] for i in indices]
+    jobs = min(len(tracks), 4)
+    worker_str = f"[bold bright_magenta]{jobs}[/bold bright_magenta] worker{'s' if jobs != 1 else ''}"
+    console.print()
+    step_print(3, 4, f"Downloading [bold bright_yellow]{len(tracks)}[/bold bright_yellow] track{'s' if len(tracks) != 1 else ''} with {worker_str}")
+    console.print()
+
+    downloaded = skipped = failed = 0
+
+    with Progress(
+        SpinnerColumn(spinner_name="dots2", style="bright_cyan"),
+        TextColumn("[bold bright_white]{task.description}"),
+        BarColumn(bar_width=28, style="bright_blue", complete_style="bright_green", finished_style="bright_green"),
+        TaskProgressColumn(style="bold bright_yellow"),
+        MofNCompleteColumn(),
+        TimeElapsedColumn(),
+        console=console,
+        transient=False,
+    ) as progress:
+        task = progress.add_task("[bright_cyan]Downloading[/bright_cyan]", total=len(tracks))
+
+        def _process(track: dict) -> str:
+            label_rich = (
+                f"[bright_cyan]{track['artist'][:30]}[/bright_cyan]"
+                f"[dim] - [/dim]"
+                f"[bright_white]{track['title'][:40]}[/bright_white]"
+            )
+            path = download_track(track, output_dir, quality, cookies_browser=browser)
+            if path == SKIP:
+                console.print(f"  [bold yellow]o[/bold yellow]  {label_rich}  [dim yellow](skipped)[/dim yellow]")
+                status = "skip"
+            elif path is None:
+                console.print(f"  [bold bright_red]x[/bold bright_red]  {label_rich}  [dim red](failed)[/dim red]")
+                status = "fail"
+            else:
+                tag_file(path, track)
+                console.print(f"  [bold bright_green]v[/bold bright_green]  {label_rich}")
+                status = "ok"
+            progress.advance(task)
+            return status
+
+        if jobs == 1:
+            for tr in tracks:
+                r = _process(tr)
+                if r == "skip":   skipped    += 1
+                elif r == "fail": failed     += 1
+                else:             downloaded += 1
+        else:
+            with ThreadPoolExecutor(max_workers=jobs) as ex:
+                futures = {ex.submit(_process, t): t for t in tracks}
+                for future in as_completed(futures):
+                    r = future.result()
+                    if r == "skip":   skipped    += 1
+                    elif r == "fail": failed     += 1
+                    else:             downloaded += 1
+
+    console.print()
+    step_print(4, 4, (
+        f"Done  "
+        f"[bold bright_green]{downloaded}[/bold bright_green] downloaded  "
+        f"[bold yellow]{skipped}[/bold yellow] skipped  "
+        f"[bold bright_red]{failed}[/bold bright_red] failed"
+    ))
+    console.print()
+    console.print(f"  [dim]Saved to[/dim] [bright_cyan]{output_dir}[/bright_cyan]")
+    console.print()
 
 
 def run_shazam(output_dir: str, quality: str, browser: str = None, duration: int = 10, file: str = None):
@@ -493,6 +819,20 @@ def main():
             if not url:
                 console.print("\n  [dim]Bye![/dim]\n")
                 sys.exit(0)
+
+        if url.startswith("\\"):
+            parts = url.split(None, 1)
+            cmd   = parts[0].lower()
+            query = parts[1].strip() if len(parts) > 1 else ""
+            if cmd == "\\shazam":
+                run_shazam(args.output, args.quality, browser=args.browser, duration=args.listen_duration)
+            elif cmd == "\\song":
+                run_song_search(query, args.output, args.quality, browser=args.browser)
+            elif cmd == "\\album":
+                run_album_search(query, args.output, args.quality, browser=args.browser)
+            else:
+                console.print(f"\n  [bold red]Unknown command:[/bold red] {cmd}\n")
+            return
 
         run(url, args.output, args.quality, args.jobs, browser=args.browser)
     except KeyboardInterrupt:
