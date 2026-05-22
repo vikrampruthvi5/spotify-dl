@@ -99,6 +99,7 @@ export interface TrendingResult {
   playlist_url: string;
   cover_url: string | null;
   tracks: TrendingTrack[];
+  excluded_known?: number;
 }
 
 export interface WatchedPlaylist {
@@ -234,6 +235,16 @@ export const api = {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     }).then((r) => _json<{ added: number }>(r)),
+
+  // iTunes preview fallback (for tracks where Spotify has no preview_url)
+  previewUrl: (artist: string, title: string) =>
+    fetch(`${BASE}/preview-url?artist=${encodeURIComponent(artist)}&title=${encodeURIComponent(title)}`)
+      .then((r) => _json<{ preview_url: string | null; source: string }>(r)),
+
+  refreshWatchedPlaylists: () =>
+    fetch(`${BASE}/playlists/refresh`, { method: "POST" })
+      .then((r) => _json<{ refreshed: number;
+                            playlists: { name: string; track_ids_count: number }[] }>(r)),
 
   getLibrary: (dir: string) =>
     fetch(`${BASE}/library?dir=${encodeURIComponent(dir)}`).then((r) =>

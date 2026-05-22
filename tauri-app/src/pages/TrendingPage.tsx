@@ -69,12 +69,9 @@ export default function TrendingPage({ outputDir, quality }: Props) {
   // Cleanup audio on unmount
   useEffect(() => () => { audioRef.current?.pause(); }, []);
 
-  const playPreview = (track: TrendingTrack) => {
-    if (!track.preview_url) {
-      setToast("Spotify did not provide a preview for this track.");
-      setTimeout(() => setToast(""), 2500);
-      return;
-    }
+  const previewCache = useRef<Record<string, string | null>>({});
+
+  const playPreview = async (track: TrendingTrack) => {
     // Toggle: clicking the same track again pauses
     if (playingId === track.id) {
       audioRef.current?.pause();
@@ -82,9 +79,32 @@ export default function TrendingPage({ outputDir, quality }: Props) {
       return;
     }
     audioRef.current?.pause();
-    const a = new Audio(track.preview_url);
+
+    // Resolve the preview URL: try Spotify first, then iTunes fallback (cached).
+    let url: string | null | undefined = track.preview_url;
+    if (!url) url = previewCache.current[track.id];
+    if (!url) {
+      setPlayingId(track.id);       // visual feedback while we fetch
+      try {
+        const res = await api.previewUrl(track.artist, track.title);
+        url = res.preview_url;
+        previewCache.current[track.id] = url;
+      } catch {
+        url = null;
+      }
+    }
+    if (!url) {
+      setPlayingId(null);
+      setToast("No preview available — neither Spotify nor iTunes has one.");
+      setTimeout(() => setToast(""), 2500);
+      return;
+    }
+
+    const a = new Audio(url);
     a.volume = 0.7;
     a.onended = () => setPlayingId(null);
+    a.onerror = () => { setPlayingId(null);
+      setToast("Could not play preview."); setTimeout(() => setToast(""), 2200); };
     a.play().catch(() => setPlayingId(null));
     audioRef.current = a;
     setPlayingId(track.id);
@@ -202,8 +222,13 @@ export default function TrendingPage({ outputDir, quality }: Props) {
                 <div style={{ color:"var(--text-dim)", fontSize:13 }}>
                   {data.tracks.filter(t => !hiddenIds.has(t.id)).length} tracks
                   {hiddenIds.size > 0 && data.tracks.some(t => hiddenIds.has(t.id)) && (
-                    <span style={{ color:"var(--text-dim)", marginLeft:6 }}>
+                    <span style={{ marginLeft:6 }}>
                       · {data.tracks.filter(t => hiddenIds.has(t.id)).length} hidden
+                    </span>
+                  )}
+                  {!!data.excluded_known && data.excluded_known > 0 && (
+                    <span style={{ marginLeft:6 }}>
+                      · {data.excluded_known} already in your playlists
                     </span>
                   )}
                 </div>
@@ -395,19 +420,15 @@ interface RowProps {
 
 function TrackRow({ track, index, selected, playing, status,
                     onToggle, onPlay, onHide, hidden }: RowProps) {
-  const hasPreview = !!track.preview_url;
-
   // Play-button content: status icon if finished, pause if playing, play otherwise.
   const playContent  = status ? (status === "ok" ? "✓" : status === "skip" ? "○" : "✕")
                               : playing ? "❚❚" : "▶";
   const playColor    = status ? STATUS_COLOR[status]
-                              : hasPreview ? (playing ? "var(--accent)" : "var(--text)")
-                              : "var(--text-dim)";
+                              : playing ? "var(--accent)" : "var(--text)";
   const playBg       = playing ? "var(--accent)" : "var(--surface-2)";
   const playFg       = playing ? "#000" : playColor;
   const playTitle    = status ? `Download ${status}`
-                              : hasPreview ? (playing ? "Pause preview" : "Play 30s preview")
-                              : "No preview available";
+                              : playing ? "Pause preview" : "Play 30s preview";
 
   return (
     <div
@@ -430,7 +451,7 @@ function TrackRow({ track, index, selected, playing, status,
 
       {/* Always-visible play / status button */}
       <button onClick={e => { e.stopPropagation(); if (!status) onPlay(); }}
-        title={playTitle} disabled={!!status || !hasPreview}
+        title={playTitle} disabled={!!status}
         style={{
           width:28, height:28, borderRadius:"50%",
           background: playBg, color: playFg,
@@ -438,18 +459,17 @@ function TrackRow({ track, index, selected, playing, status,
           fontSize: playing ? 9 : 11, fontWeight:700,
           border: `1px solid ${playing ? "var(--accent)" : "var(--border)"}`,
           padding:0,
-          opacity: (!status && !hasPreview) ? 0.4 : 1,
-          cursor: (status || !hasPreview) ? "default" : "pointer",
+          cursor: status ? "default" : "pointer",
         }}>
         {playContent}
       </button>
 
       {/* Album art (also clickable to play, secondary affordance) */}
-      <div onClick={e => { e.stopPropagation(); if (hasPreview && !status) onPlay(); }}
+      <div onClick={e => { e.stopPropagation(); if (!status) onPlay(); }}
         style={{
           width:40, height:40, borderRadius:4, position:"relative",
           background:"var(--surface-2)", overflow:"hidden",
-          cursor: hasPreview && !status ? "pointer" : "default", flexShrink:0,
+          cursor: status ? "default" : "pointer", flexShrink:0,
         }}>
         {track.cover_url && (
           <img src={track.cover_url} alt=""

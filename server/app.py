@@ -11,6 +11,7 @@ import asyncio
 import json
 import os
 import re
+import urllib.parse
 import uuid
 import warnings
 from concurrent.futures import ThreadPoolExecutor, as_completed as futures_done
@@ -354,16 +355,78 @@ async def trending_regions():
     return list_regions()
 
 
+def _known_track_ids() -> set:
+    """Union of every track ID we already track in any watched playlist
+    (either fully downloaded or just referenced in the playlist body).
+    Used to filter out trending suggestions the user already has.
+    """
+    known = set()
+    for entry in load_watched().get("playlists", []):
+        known.update(entry.get("downloaded_ids", []))
+        known.update(entry.get("track_ids", []))
+    return known
+
+
 @app.get("/api/trending")
-async def trending(region: str = Query("bollywood")):
-    """Fetch the current trending Spotify playlist for a region."""
+async def trending(region: str = Query("bollywood"),
+                   exclude_known: bool = True):
+    """Fetch the current trending Spotify playlist for a region.
+
+    By default, tracks the user already has in any watched playlist
+    (downloaded or referenced) are filtered out — pass exclude_known=false
+    to disable.
+    """
     loop = asyncio.get_running_loop()
     try:
-        return await loop.run_in_executor(_executor, get_trending, region, 50)
+        result = await loop.run_in_executor(_executor, get_trending, region, 50)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+    if exclude_known:
+        known = _known_track_ids()
+        before = len(result["tracks"])
+        result["tracks"] = [t for t in result["tracks"] if t["id"] not in known]
+        result["excluded_known"] = before - len(result["tracks"])
+    else:
+        result["excluded_known"] = 0
+    return result
+
+
+# ── Preview fallback (iTunes Search API) ──────────────────────────────────────
+
+_PREVIEW_CACHE: dict[str, Optional[str]] = {}
+
+
+@app.get("/api/preview-url")
+async def preview_url(artist: str = Query(...), title: str = Query(...)):
+    """Fall back to iTunes Search API for tracks where Spotify returns no
+    preview_url. Result is cached per (artist|title) for the session.
+    Returns {"preview_url": "...m4a"} or {"preview_url": null}.
+    """
+    key = f"{artist.lower().strip()}|{title.lower().strip()}"
+    if key in _PREVIEW_CACHE:
+        return {"preview_url": _PREVIEW_CACHE[key], "source": "itunes_cached"}
+
+    def _lookup() -> Optional[str]:
+        try:
+            import requests
+            q   = urllib.parse.quote_plus(f"{artist} {title}")
+            url = f"https://itunes.apple.com/search?term={q}&entity=song&limit=1"
+            r   = requests.get(url, timeout=5)
+            r.raise_for_status()
+            results = r.json().get("results", [])
+            if results:
+                return results[0].get("previewUrl")
+        except Exception:
+            pass
+        return None
+
+    loop = asyncio.get_running_loop()
+    found = await loop.run_in_executor(_executor, _lookup)
+    _PREVIEW_CACHE[key] = found
+    return {"preview_url": found, "source": "itunes"}
 
 
 # ── Spotify OAuth ─────────────────────────────────────────────────────────────
@@ -729,7 +792,9 @@ async def create_playlist(req: PlaylistAddRequest):
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
     folder = req.folder or os.path.join(DEFAULT_OUTPUT_DIR, info["name"])
-    return add_playlist(req.url, info["name"], folder, total_tracks=info["total_tracks"])
+    track_ids = [t["id"] for t in info["tracks"] if t.get("id")]
+    return add_playlist(req.url, info["name"], folder,
+                        total_tracks=info["total_tracks"], track_ids=track_ids)
 
 
 @app.put("/api/playlists")
@@ -749,6 +814,51 @@ async def delete_playlist(url: str = Query(...)):
     if not remove_playlist(url):
         raise HTTPException(status_code=404, detail="Playlist not found")
     return {"deleted": True}
+
+
+@app.post("/api/playlists/refresh")
+async def refresh_playlists():
+    """Re-fetch every watched playlist from Spotify and update its track_ids
+    and total_tracks. Useful for backfilling track_ids on playlists added
+    before this field existed (so trending filtering becomes accurate).
+    """
+    config = load_watched()
+    if not config["playlists"]:
+        return {"refreshed": 0, "playlists": []}
+
+    def _refresh_one(entry):
+        try:
+            info = get_spotify_info(entry["url"])
+            track_ids = [t["id"] for t in info["tracks"] if t.get("id")]
+            return {
+                "url": entry["url"], "name": info["name"],
+                "total_tracks": info["total_tracks"], "track_ids": track_ids,
+            }
+        except Exception as e:
+            return {"url": entry["url"], "error": str(e)}
+
+    loop    = asyncio.get_running_loop()
+    results = await asyncio.gather(*(
+        loop.run_in_executor(_executor, _refresh_one, e)
+        for e in config["playlists"]
+    ))
+
+    # Persist
+    config = load_watched()  # re-load in case anything else mutated it
+    updated = []
+    for r in results:
+        if "error" in r:
+            continue
+        for e in config["playlists"]:
+            if e["url"] == r["url"]:
+                e["total_tracks"] = r["total_tracks"]
+                e["track_ids"]    = r["track_ids"]
+                updated.append({"name": r["name"],
+                                "track_ids_count": len(r["track_ids"])})
+                break
+    from core.watcher import save_watched
+    save_watched(config)
+    return {"refreshed": len(updated), "playlists": updated}
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────

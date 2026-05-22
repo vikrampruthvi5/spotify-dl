@@ -1231,7 +1231,8 @@ def run_configure(watcher, output_dir: str):
             folder = _prompt_simple("♬  Local folder", default=os.path.join(output_dir, pl_name))
             if not folder:
                 continue
-            add_playlist(url, pl_name, folder, total_tracks=info["total_tracks"])
+            add_playlist(url, pl_name, folder, total_tracks=info["total_tracks"],
+                         track_ids=[t["id"] for t in info["tracks"] if t.get("id")])
             console.print(f"\n  [bold bright_green]Added:[/bold bright_green] [bright_cyan]{pl_name}[/bright_cyan]  →  {folder}  [dim]({info['total_tracks']} tracks)[/dim]\n")
 
         elif action == "edit":

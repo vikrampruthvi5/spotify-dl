@@ -33,17 +33,22 @@ def save_watched(config: dict):
         json.dump(config, f, indent=2)
 
 
-def add_playlist(url: str, name: str, folder: str, total_tracks: int = 0) -> dict:
+def add_playlist(url: str, name: str, folder: str,
+                 total_tracks: int = 0, track_ids: list = None) -> dict:
+    track_ids = list(track_ids) if track_ids else []
     config = load_watched()
     for entry in config["playlists"]:
         if entry["url"] == url:
             entry["folder"]       = folder
             entry["name"]         = name
             entry["total_tracks"] = total_tracks
+            if track_ids:
+                entry["track_ids"] = track_ids
             save_watched(config)
             return entry
     entry = {"url": url, "name": name, "folder": folder,
-             "total_tracks": total_tracks, "downloaded_ids": []}
+             "total_tracks": total_tracks,
+             "downloaded_ids": [], "track_ids": track_ids}
     config["playlists"].append(entry)
     save_watched(config)
     return entry
@@ -146,14 +151,19 @@ class PlaylistWatcher:
                 )
                 continue
 
-            # Refresh cached Spotify count whenever we fetch
-            if info["total_tracks"] != entry.get("total_tracks"):
+            # Refresh cached Spotify count + full track ID set whenever we fetch
+            current_ids = [t["id"] for t in info["tracks"] if t.get("id")]
+            count_changed = info["total_tracks"] != entry.get("total_tracks")
+            ids_changed   = set(current_ids) != set(entry.get("track_ids", []))
+            if count_changed or ids_changed:
                 for e in config["playlists"]:
                     if e["url"] == entry["url"]:
                         e["total_tracks"] = info["total_tracks"]
+                        e["track_ids"]    = current_ids
                         break
                 save_watched(config)
                 entry["total_tracks"] = info["total_tracks"]
+                entry["track_ids"]    = current_ids
 
             known_ids  = set(entry.get("downloaded_ids", []))
             new_tracks = [t for t in info["tracks"] if t["id"] and t["id"] not in known_ids]

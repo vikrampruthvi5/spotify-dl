@@ -49,7 +49,7 @@ if [ -z "$DJ_PATH" ]; then
     cat > "$HOME/.local/bin/dj" <<EOF
 #!/usr/bin/env bash
 cd "$INSTALL_DIR"
-exec python3 main.py "\$@"
+exec python3 -m cli.main "\$@"
 EOF
     chmod +x "$HOME/.local/bin/dj"
     DJ_PATH="$HOME/.local/bin/dj"
