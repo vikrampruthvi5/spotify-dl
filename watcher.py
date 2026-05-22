@@ -47,6 +47,24 @@ def add_playlist(url: str, name: str, folder: str) -> dict:
     return entry
 
 
+def update_playlist(url: str, new_url: str = None, new_name: str = None,
+                    new_folder: str = None, reset_ids: bool = False) -> bool:
+    config = load_watched()
+    for entry in config["playlists"]:
+        if entry["url"] == url:
+            if new_url:
+                entry["url"] = new_url
+            if new_name:
+                entry["name"] = new_name
+            if new_folder:
+                entry["folder"] = new_folder
+            if reset_ids:
+                entry["downloaded_ids"] = []
+            save_watched(config)
+            return True
+    return False
+
+
 def remove_playlist(url: str) -> bool:
     config = load_watched()
     before = len(config["playlists"])

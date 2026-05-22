@@ -33,7 +33,7 @@ from recognizer import record_and_identify, identify_file
 from search import search_tracks, search_albums
 from language import detect_language
 from monitor import ResourceColumn, run_monitor
-from watcher import PlaylistWatcher, load_watched, add_playlist, remove_playlist
+from watcher import PlaylistWatcher, load_watched, add_playlist, remove_playlist, update_playlist
 
 console = Console()
 
@@ -821,7 +821,7 @@ def run_configure(watcher, output_dir: str):
             border_style=color,
             box=box.DOUBLE_EDGE,
         ))
-        console.print("  [dim]add · remove <#> · start · stop · check · back[/dim]")
+        console.print("  [dim]add · edit <#> · remove <#> · start · stop · check · back[/dim]")
         console.print()
 
         resp = _prompt_simple("♬  Action")
@@ -849,6 +849,57 @@ def run_configure(watcher, output_dir: str):
                 continue
             add_playlist(url, pl_name, folder)
             console.print(f"\n  [bold bright_green]Added:[/bold bright_green] [bright_cyan]{pl_name}[/bright_cyan]  →  {folder}\n")
+
+        elif action == "edit":
+            if not arg:
+                arg = _prompt_simple("♬  Playlist # to edit") or ""
+            try:
+                idx = int(arg) - 1
+                if not 0 <= idx < len(playlists):
+                    raise ValueError
+            except ValueError:
+                console.print("\n  [bold red]Invalid number.[/bold red]\n")
+                continue
+            entry = playlists[idx]
+            console.print()
+            new_url = _prompt_simple("♬  New Spotify URL", default=entry["url"])
+            if not new_url:
+                console.print("\n  [dim]Cancelled.[/dim]\n")
+                continue
+
+            url_changed = new_url != entry["url"]
+            new_name    = None
+            reset_ids   = False
+
+            if url_changed:
+                console.print(f"\n  [dim]Fetching playlist info...[/dim]")
+                try:
+                    info     = get_spotify_info(new_url)
+                    new_name = info["name"]
+                    console.print(f"  [dim]Name:[/dim] [bright_white]{new_name}[/bright_white]")
+                except Exception as e:
+                    console.print(f"\n  [bold red]Error:[/bold red] {e}\n")
+                    continue
+                reset_str = _prompt_simple("♬  Reset sync history? [y/N]", default="n")
+                reset_ids = (reset_str or "n").strip().lower() in ("y", "yes")
+
+            new_folder = _prompt_simple("♬  Local folder", default=entry["folder"])
+            if not new_folder:
+                console.print("\n  [dim]Cancelled.[/dim]\n")
+                continue
+
+            update_playlist(
+                entry["url"],
+                new_url    = new_url    if url_changed else None,
+                new_name   = new_name,
+                new_folder = new_folder if new_folder != entry["folder"] else None,
+                reset_ids  = reset_ids,
+            )
+            display_name = new_name or entry["name"]
+            console.print(f"\n  [bold bright_green]Updated:[/bold bright_green] [bright_cyan]{display_name}[/bright_cyan]")
+            if reset_ids:
+                console.print("  [dim]Sync history cleared — all tracks will re-download on next check.[/dim]")
+            console.print()
 
         elif action == "remove":
             if not arg:
@@ -891,7 +942,7 @@ def run_configure(watcher, output_dir: str):
         else:
             console.print(
                 f"\n  [bold red]Unknown action:[/bold red] {action}  "
-                f"[dim](add / remove / start / stop / check / back)[/dim]\n"
+                f"[dim](add / edit / remove / start / stop / check / back)[/dim]\n"
             )
 
 
