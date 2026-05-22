@@ -848,12 +848,15 @@ def run_configure(watcher, output_dir: str):
             row_styles=["", "on grey11"],
             padding=(0, 1),
         )
-        t.add_column("#",      style="bold bright_yellow", width=4, justify="right")
-        t.add_column("Name",   style="bold bright_white",  max_width=30)
-        t.add_column("Folder", style="bright_cyan",        max_width=35)
-        t.add_column("Synced", style="dim",                width=8, justify="right")
+        t.add_column("#",       style="bold bright_yellow", width=4, justify="right")
+        t.add_column("Name",    style="bold bright_white",  max_width=28)
+        t.add_column("Folder",  style="bright_cyan",        max_width=33)
+        t.add_column("Spotify", style="bright_yellow",      width=8,  justify="right")
+        t.add_column("Synced",  style="bright_green",       width=8,  justify="right")
         for i, p in enumerate(playlists, 1):
-            t.add_row(str(i), p["name"][:28], p["folder"][:33], str(len(p.get("downloaded_ids", []))))
+            spotify_total = str(p["total_tracks"]) if p.get("total_tracks") else "[dim]?[/dim]"
+            synced        = str(len(p.get("downloaded_ids", [])))
+            t.add_row(str(i), p["name"][:26], p["folder"][:31], spotify_total, synced)
 
         wstate = "[bold bright_green]RUNNING[/bold bright_green]" if watcher.is_running() else "[bold yellow]STOPPED[/bold yellow]"
         body = t if playlists else Align.center("[dim]No playlists configured yet.[/dim]")
@@ -889,8 +892,8 @@ def run_configure(watcher, output_dir: str):
             folder = _prompt_simple("♬  Local folder", default=os.path.join(output_dir, pl_name))
             if not folder:
                 continue
-            add_playlist(url, pl_name, folder)
-            console.print(f"\n  [bold bright_green]Added:[/bold bright_green] [bright_cyan]{pl_name}[/bright_cyan]  →  {folder}\n")
+            add_playlist(url, pl_name, folder, total_tracks=info["total_tracks"])
+            console.print(f"\n  [bold bright_green]Added:[/bold bright_green] [bright_cyan]{pl_name}[/bright_cyan]  →  {folder}  [dim]({info['total_tracks']} tracks)[/dim]\n")
 
         elif action == "edit":
             if not arg:

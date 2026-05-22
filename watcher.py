@@ -33,15 +33,17 @@ def save_watched(config: dict):
         json.dump(config, f, indent=2)
 
 
-def add_playlist(url: str, name: str, folder: str) -> dict:
+def add_playlist(url: str, name: str, folder: str, total_tracks: int = 0) -> dict:
     config = load_watched()
     for entry in config["playlists"]:
         if entry["url"] == url:
-            entry["folder"] = folder
-            entry["name"]   = name
+            entry["folder"]       = folder
+            entry["name"]         = name
+            entry["total_tracks"] = total_tracks
             save_watched(config)
             return entry
-    entry = {"url": url, "name": name, "folder": folder, "downloaded_ids": []}
+    entry = {"url": url, "name": name, "folder": folder,
+             "total_tracks": total_tracks, "downloaded_ids": []}
     config["playlists"].append(entry)
     save_watched(config)
     return entry
@@ -143,6 +145,15 @@ class PlaylistWatcher:
                     f"[bright_cyan]{entry['name']}[/bright_cyan]: {e}"
                 )
                 continue
+
+            # Refresh cached Spotify count whenever we fetch
+            if info["total_tracks"] != entry.get("total_tracks"):
+                for e in config["playlists"]:
+                    if e["url"] == entry["url"]:
+                        e["total_tracks"] = info["total_tracks"]
+                        break
+                save_watched(config)
+                entry["total_tracks"] = info["total_tracks"]
 
             known_ids  = set(entry.get("downloaded_ids", []))
             new_tracks = [t for t in info["tracks"] if t["id"] and t["id"] not in known_ids]
