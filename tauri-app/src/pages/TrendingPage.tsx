@@ -38,12 +38,33 @@ export default function TrendingPage({ outputDir, quality }: Props) {
   const [authed, setAuthed]         = useState(false);
   const [toast, setToast]           = useState("");
   const [playingId, setPlayingId]   = useState<string | null>(null);
+  const [hiddenIds, setHiddenIds]   = useState<Set<string>>(() => {
+    try { return new Set(JSON.parse(localStorage.getItem("spotidl.hidden_tracks") ?? "[]")); }
+    catch { return new Set(); }
+  });
+  const [showHidden, setShowHidden] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const esRef    = useRef<EventSource | null>(null);
 
   useEffect(() => {
     api.authStatus().then(r => setAuthed(r.authenticated)).catch(() => {});
   }, []);
+
+  // Persist hidden track IDs across sessions
+  useEffect(() => {
+    localStorage.setItem("spotidl.hidden_tracks", JSON.stringify(Array.from(hiddenIds)));
+  }, [hiddenIds]);
+
+  const hideTrack = (id: string) => {
+    setHiddenIds(prev => new Set(prev).add(id));
+    setSelected(prev => { const next = new Set(prev); next.delete(id); return next; });
+  };
+
+  const restoreTrack = (id: string) => {
+    setHiddenIds(prev => { const next = new Set(prev); next.delete(id); return next; });
+  };
+
+  const clearAllHidden = () => setHiddenIds(new Set());
 
   // Cleanup audio on unmount
   useEffect(() => () => { audioRef.current?.pause(); }, []);
@@ -179,7 +200,12 @@ export default function TrendingPage({ outputDir, quality }: Props) {
                   {data.playlist_name}
                 </div>
                 <div style={{ color:"var(--text-dim)", fontSize:13 }}>
-                  {data.tracks.length} tracks
+                  {data.tracks.filter(t => !hiddenIds.has(t.id)).length} tracks
+                  {hiddenIds.size > 0 && data.tracks.some(t => hiddenIds.has(t.id)) && (
+                    <span style={{ color:"var(--text-dim)", marginLeft:6 }}>
+                      · {data.tracks.filter(t => hiddenIds.has(t.id)).length} hidden
+                    </span>
+                  )}
                 </div>
               </div>
               <div style={{ display:"flex", gap:8 }}>
@@ -204,15 +230,61 @@ export default function TrendingPage({ outputDir, quality }: Props) {
                   No tracks returned by Spotify.
                 </div>
               )}
-              {data.tracks.map((t, i) => (
-                <TrackRow key={t.id} track={t} index={i + 1}
-                  selected={selected.has(t.id)}
-                  status={trackStatus[t.id]}
-                  playing={playingId === t.id}
-                  onToggle={() => toggleOne(t.id)}
-                  onPlay={() => playPreview(t)} />
-              ))}
+              {data.tracks
+                .filter(t => !hiddenIds.has(t.id))
+                .map((t, i) => (
+                  <TrackRow key={t.id} track={t} index={i + 1}
+                    selected={selected.has(t.id)}
+                    status={trackStatus[t.id]}
+                    playing={playingId === t.id}
+                    onToggle={() => toggleOne(t.id)}
+                    onPlay={() => playPreview(t)}
+                    onHide={() => hideTrack(t.id)} />
+                ))}
             </div>
+
+            {/* Hidden tracks footer */}
+            {(() => {
+              const hiddenHere = data.tracks.filter(t => hiddenIds.has(t.id));
+              if (hiddenHere.length === 0) return null;
+              return (
+                <div style={{ marginTop:16, fontSize:12, color:"var(--text-dim)",
+                              display:"flex", alignItems:"center", gap:14 }}>
+                  <button onClick={() => setShowHidden(v => !v)}
+                    style={{ background:"transparent", color:"var(--text-dim)",
+                             padding:"4px 10px", border:"1px solid var(--border)",
+                             borderRadius:14, fontSize:11 }}>
+                    {showHidden ? "Hide" : "Show"} {hiddenHere.length} hidden track{hiddenHere.length === 1 ? "" : "s"}
+                  </button>
+                  {showHidden && (
+                    <button onClick={clearAllHidden}
+                      style={{ background:"transparent", color:"var(--text-dim)",
+                               padding:"4px 10px", border:"none", fontSize:11,
+                               textDecoration:"underline" }}>
+                      Restore all
+                    </button>
+                  )}
+                </div>
+              );
+            })()}
+
+            {/* Expanded hidden tracks list */}
+            {showHidden && (
+              <div style={{ marginTop:10, background:"var(--surface)",
+                            border:"1px dashed var(--border)", borderRadius:12,
+                            overflow:"hidden", opacity:0.75 }}>
+                {data.tracks.filter(t => hiddenIds.has(t.id)).map((t, i) => (
+                  <TrackRow key={t.id} track={t} index={i + 1}
+                    selected={false}
+                    status={undefined}
+                    playing={playingId === t.id}
+                    onToggle={() => {}}
+                    onPlay={() => playPreview(t)}
+                    onHide={() => restoreTrack(t.id)}
+                    hidden />
+                ))}
+              </div>
+            )}
           </>
         )}
 
@@ -317,67 +389,78 @@ interface RowProps {
   status?: "ok" | "skip" | "fail";
   onToggle: () => void;
   onPlay: () => void;
+  onHide: () => void;
+  hidden?: boolean;
 }
 
-function TrackRow({ track, index, selected, playing, status, onToggle, onPlay }: RowProps) {
+function TrackRow({ track, index, selected, playing, status,
+                    onToggle, onPlay, onHide, hidden }: RowProps) {
   const hasPreview = !!track.preview_url;
+
+  // Play-button content: status icon if finished, pause if playing, play otherwise.
+  const playContent  = status ? (status === "ok" ? "✓" : status === "skip" ? "○" : "✕")
+                              : playing ? "❚❚" : "▶";
+  const playColor    = status ? STATUS_COLOR[status]
+                              : hasPreview ? (playing ? "var(--accent)" : "var(--text)")
+                              : "var(--text-dim)";
+  const playBg       = playing ? "var(--accent)" : "var(--surface-2)";
+  const playFg       = playing ? "#000" : playColor;
+  const playTitle    = status ? `Download ${status}`
+                              : hasPreview ? (playing ? "Pause preview" : "Play 30s preview")
+                              : "No preview available";
+
   return (
     <div
-      onClick={onToggle}
+      onClick={hidden ? undefined : onToggle}
       style={{
         display:"grid",
-        gridTemplateColumns:"28px 36px 48px 1fr 1fr 60px 60px",
-        padding:"10px 16px", borderBottom:"1px solid var(--border)",
-        background: selected ? "rgba(29, 185, 84, 0.08)" : (index % 2 ? "var(--surface-2)" : "transparent"),
-        alignItems:"center", fontSize:13, cursor:"pointer", gap:10,
+        gridTemplateColumns:"24px 34px 44px 1fr 1fr 50px 48px 28px",
+        padding:"10px 14px", borderBottom:"1px solid var(--border)",
+        background: hidden ? "transparent"
+                    : selected ? "rgba(29, 185, 84, 0.08)"
+                    : (index % 2 ? "var(--surface-2)" : "transparent"),
+        alignItems:"center", fontSize:13, cursor: hidden ? "default" : "pointer", gap:10,
+        opacity: hidden ? 0.55 : 1,
       }}
     >
-      <input type="checkbox" checked={selected} onChange={onToggle}
+      {/* Checkbox */}
+      <input type="checkbox" checked={selected} onChange={onToggle} disabled={hidden}
         onClick={e => e.stopPropagation()}
-        style={{ cursor:"pointer", accentColor:"var(--accent)" }} />
+        style={{ cursor: hidden ? "not-allowed" : "pointer", accentColor:"var(--accent)" }} />
 
-      <span style={{ color:"var(--text-dim)", fontSize:12, textAlign:"center" }}>
-        {status ? <span style={{ color: STATUS_COLOR[status], fontWeight:700 }}>
-          {status === "ok" ? "✓" : status === "skip" ? "○" : "✕"}
-        </span> : index}
-      </span>
+      {/* Always-visible play / status button */}
+      <button onClick={e => { e.stopPropagation(); if (!status) onPlay(); }}
+        title={playTitle} disabled={!!status || !hasPreview}
+        style={{
+          width:28, height:28, borderRadius:"50%",
+          background: playBg, color: playFg,
+          display:"flex", alignItems:"center", justifyContent:"center",
+          fontSize: playing ? 9 : 11, fontWeight:700,
+          border: `1px solid ${playing ? "var(--accent)" : "var(--border)"}`,
+          padding:0,
+          opacity: (!status && !hasPreview) ? 0.4 : 1,
+          cursor: (status || !hasPreview) ? "default" : "pointer",
+        }}>
+        {playContent}
+      </button>
 
-      {/* Album art with play-on-hover overlay */}
-      <div onClick={e => { e.stopPropagation(); onPlay(); }}
-        title={hasPreview ? (playing ? "Pause preview" : "Play 30s preview") : "No preview available"}
+      {/* Album art (also clickable to play, secondary affordance) */}
+      <div onClick={e => { e.stopPropagation(); if (hasPreview && !status) onPlay(); }}
         style={{
           width:40, height:40, borderRadius:4, position:"relative",
           background:"var(--surface-2)", overflow:"hidden",
-          cursor: hasPreview ? "pointer" : "default", flexShrink:0,
+          cursor: hasPreview && !status ? "pointer" : "default", flexShrink:0,
         }}>
         {track.cover_url && (
           <img src={track.cover_url} alt=""
             style={{ width:"100%", height:"100%", objectFit:"cover",
                      opacity: playing ? 0.4 : 1, transition:"opacity 0.15s" }} />
         )}
-        <div style={{
-          position:"absolute", inset:0, display:"flex",
-          alignItems:"center", justifyContent:"center",
-          background: playing
-            ? "rgba(0,0,0,0.4)"
-            : hasPreview ? "rgba(0,0,0,0)" : "rgba(0,0,0,0)",
-          color: hasPreview ? "#fff" : "var(--text-dim)",
-          fontSize:14, opacity: playing ? 1 : 0,
-          transition:"opacity 0.15s",
-        }}
-          className={hasPreview ? "play-hover" : ""}>
-          {playing ? "❚❚" : "▶"}
-        </div>
-        {!playing && hasPreview && (
-          <div style={{
-            position:"absolute", inset:0, display:"flex",
-            alignItems:"center", justifyContent:"center",
-            background:"rgba(0,0,0,0.55)", color:"#fff", fontSize:13,
-            opacity:0, transition:"opacity 0.15s",
-          }}
-          onMouseEnter={e => (e.currentTarget.style.opacity = "1")}
-          onMouseLeave={e => (e.currentTarget.style.opacity = "0")}>
-            ▶
+        {playing && (
+          <div style={{ position:"absolute", inset:0, display:"flex",
+                        alignItems:"center", justifyContent:"center",
+                        color:"#fff", fontSize:11, fontWeight:700 }}>
+            ❚❚
           </div>
         )}
       </div>
@@ -403,6 +486,28 @@ function TrackRow({ track, index, selected, playing, status, onToggle, onPlay }:
       <span style={{ color:"var(--text-dim)", fontSize:11, textAlign:"right" }}>
         {_mmss(track.duration_ms)}
       </span>
+
+      {/* Hide / restore button */}
+      <button onClick={e => { e.stopPropagation(); onHide(); }}
+        title={hidden ? "Restore this track" : "Hide from suggestions"}
+        style={{
+          width:24, height:24, borderRadius:"50%",
+          background:"transparent", color:"var(--text-dim)",
+          border:"none", padding:0, fontSize:14,
+          opacity:0.5, transition:"opacity 0.15s, color 0.15s, background 0.15s",
+        }}
+        onMouseEnter={e => {
+          e.currentTarget.style.opacity   = "1";
+          e.currentTarget.style.color     = hidden ? "var(--accent)" : "var(--red)";
+          e.currentTarget.style.background = "var(--surface-2)";
+        }}
+        onMouseLeave={e => {
+          e.currentTarget.style.opacity   = "0.5";
+          e.currentTarget.style.color     = "var(--text-dim)";
+          e.currentTarget.style.background = "transparent";
+        }}>
+        {hidden ? "↻" : "×"}
+      </button>
     </div>
   );
 }
