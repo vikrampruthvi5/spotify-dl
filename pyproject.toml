@@ -38,5 +38,6 @@ py-modules = [
     "search",
     "spotify_client",
     "tagger",
+    "watcher",
     "youtube",
 ]

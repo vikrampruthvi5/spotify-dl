@@ -33,6 +33,7 @@ from recognizer import record_and_identify, identify_file
 from search import search_tracks, search_albums
 from language import detect_language
 from monitor import ResourceColumn, run_monitor
+from watcher import PlaylistWatcher, load_watched, add_playlist, remove_playlist
 
 console = Console()
 
@@ -69,11 +70,12 @@ _PT_STYLE = PtStyle.from_dict({
 })
 
 _SLASH_COMMANDS = [
-    ("\\shazam",    "Listen via mic & identify song"),
-    ("\\song",      "Search track by title"),
-    ("\\album",     "Browse album & download tracks"),
-    ("\\organize",  "Toggle Language/ subfolder sorting"),
-    ("\\monitor",   "Live CPU / RAM / temperature display"),
+    ("\\shazam",     "Listen via mic & identify song"),
+    ("\\song",       "Search track by title"),
+    ("\\album",      "Browse album & download tracks"),
+    ("\\organize",   "Toggle Language/ subfolder sorting"),
+    ("\\monitor",    "Live CPU / RAM / temperature display"),
+    ("\\configure",  "Manage watched playlists & auto-download"),
 ]
 
 
@@ -92,15 +94,19 @@ class _SlashCompleter(Completer):
                 )
 
 
-def get_url_interactive(organize: bool = False) -> str:
+def get_url_interactive(organize: bool = False, watcher_running: bool = False) -> str:
     kb = KeyBindings()
 
     @kb.add("escape")
     def _quit(event):
         event.app.exit(result=None)
 
-    org_badge = "  <b>[organize: ON]</b>" if organize else ""
-    toolbar = HTML(f"  <b>\\</b>  commands      <b>ENTER</b>  download{org_badge}      <b>ESC</b>  exit  ")
+    badges = ""
+    if organize:
+        badges += "  <b>[organize: ON]</b>"
+    if watcher_running:
+        badges += "  <b>[watcher: ON]</b>"
+    toolbar = HTML(f"  <b>\\</b>  commands      <b>ENTER</b>  download{badges}      <b>ESC</b>  exit  ")
 
     session = PromptSession(
         style=_PT_STYLE,
@@ -785,6 +791,110 @@ def run(url: str, output_dir: str, quality: str, jobs, browser: str = None, orga
     console.print()
 
 
+def run_configure(watcher, output_dir: str):
+    while True:
+        config = load_watched()
+        playlists = config["playlists"]
+
+        console.print()
+        color = "bright_cyan"
+        t = Table(
+            show_header=True,
+            header_style="bold bright_white on blue",
+            box=box.HEAVY_HEAD,
+            border_style=color,
+            row_styles=["", "on grey11"],
+            padding=(0, 1),
+        )
+        t.add_column("#",      style="bold bright_yellow", width=4, justify="right")
+        t.add_column("Name",   style="bold bright_white",  max_width=30)
+        t.add_column("Folder", style="bright_cyan",        max_width=35)
+        t.add_column("Synced", style="dim",                width=8, justify="right")
+        for i, p in enumerate(playlists, 1):
+            t.add_row(str(i), p["name"][:28], p["folder"][:33], str(len(p.get("downloaded_ids", []))))
+
+        wstate = "[bold bright_green]RUNNING[/bold bright_green]" if watcher.is_running() else "[bold yellow]STOPPED[/bold yellow]"
+        body = t if playlists else Align.center("[dim]No playlists configured yet.[/dim]")
+        console.print(Panel(
+            body,
+            title=f"[bold {color}]  ♬  Watched Playlists  [dim](watcher: {wstate})[/dim]  [/bold {color}]",
+            border_style=color,
+            box=box.DOUBLE_EDGE,
+        ))
+        console.print("  [dim]add · remove <#> · start · stop · check · back[/dim]")
+        console.print()
+
+        resp = _prompt_simple("♬  Action")
+        if not resp or resp.lower() in ("back", "b", "exit", "quit"):
+            break
+
+        parts  = resp.strip().split(None, 1)
+        action = parts[0].lower()
+        arg    = parts[1].strip() if len(parts) > 1 else ""
+
+        if action == "add":
+            console.print()
+            url = _prompt_simple("♬  Spotify playlist URL")
+            if not url:
+                continue
+            console.print(f"\n  [dim]Fetching playlist info...[/dim]")
+            try:
+                info    = get_spotify_info(url)
+                pl_name = info["name"]
+            except Exception as e:
+                console.print(f"\n  [bold red]Error:[/bold red] {e}\n")
+                continue
+            folder = _prompt_simple("♬  Local folder", default=os.path.join(output_dir, pl_name))
+            if not folder:
+                continue
+            add_playlist(url, pl_name, folder)
+            console.print(f"\n  [bold bright_green]Added:[/bold bright_green] [bright_cyan]{pl_name}[/bright_cyan]  →  {folder}\n")
+
+        elif action == "remove":
+            if not arg:
+                arg = _prompt_simple("♬  Playlist # to remove") or ""
+            try:
+                idx = int(arg) - 1
+                if not 0 <= idx < len(playlists):
+                    raise ValueError
+            except ValueError:
+                console.print("\n  [bold red]Invalid number.[/bold red]\n")
+                continue
+            entry = playlists[idx]
+            if remove_playlist(entry["url"]):
+                console.print(f"\n  [bold bright_green]Removed:[/bold bright_green] [bright_cyan]{entry['name']}[/bright_cyan]\n")
+
+        elif action == "start":
+            if not watcher.is_running():
+                watcher.start()
+                console.print(
+                    f"\n  [bold bright_green]Watcher started.[/bold bright_green]  "
+                    f"Polling every {watcher.poll_interval // 60} min.\n"
+                )
+            else:
+                console.print("\n  [dim]Watcher is already running.[/dim]\n")
+
+        elif action == "stop":
+            if watcher.is_running():
+                watcher.stop()
+                console.print("\n  [bold yellow]Watcher stopped.[/bold yellow]\n")
+            else:
+                console.print("\n  [dim]Watcher is not running.[/dim]\n")
+
+        elif action == "check":
+            if watcher.is_running():
+                watcher.check_now()
+                console.print("\n  [bright_cyan]Manual check triggered.[/bright_cyan]\n")
+            else:
+                console.print("\n  [yellow]Watcher not running. Use 'start' first.[/yellow]\n")
+
+        else:
+            console.print(
+                f"\n  [bold red]Unknown action:[/bold red] {action}  "
+                f"[dim](add / remove / start / stop / check / back)[/dim]\n"
+            )
+
+
 def main():
     print_banner()
 
@@ -840,6 +950,13 @@ def main():
         action="store_true",
         help="Sort downloads into Language/Artist - Title.mp3 subfolders",
     )
+    parser.add_argument(
+        "--watch-interval",
+        type=int,
+        default=15,
+        metavar="MINS",
+        help="How often (minutes) the watcher polls watched playlists (default: 15)",
+    )
 
     args = parser.parse_args()
 
@@ -861,9 +978,27 @@ def main():
 
         # Interactive loop — keeps running until ESC at the main prompt
         organize = args.organize
+        watcher  = PlaylistWatcher(
+            quality       = args.quality,
+            browser       = args.browser,
+            poll_interval = args.watch_interval * 60,
+            organize      = organize,
+        )
+
         while True:
-            url = get_url_interactive(organize=organize)
+            # Drain any watcher notifications before showing the prompt
+            while not watcher.notifications.empty():
+                try:
+                    msg = watcher.notifications.get_nowait()
+                    console.print(f"\n  {msg}")
+                except Exception:
+                    break
+            if not watcher.notifications.empty():
+                console.print()
+
+            url = get_url_interactive(organize=organize, watcher_running=watcher.is_running())
             if not url:
+                watcher.stop()
                 console.print("\n  [dim]Bye![/dim]\n")
                 break
 
@@ -876,8 +1011,12 @@ def main():
                     continue
                 elif cmd == "\\organize":
                     organize = not organize
+                    watcher.organize = organize
                     state = "[bold bright_green]ON[/bold bright_green]" if organize else "[bold yellow]OFF[/bold yellow]"
                     console.print(f"\n  Organize mode: {state}  [dim](songs sorted into Language/ subfolders)[/dim]\n")
+                    continue
+                elif cmd == "\\configure":
+                    run_configure(watcher, args.output)
                     continue
                 elif cmd == "\\shazam":
                     run_shazam(args.output, args.quality, browser=args.browser, duration=args.listen_duration, organize=organize)

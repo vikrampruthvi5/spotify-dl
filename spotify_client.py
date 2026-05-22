@@ -22,12 +22,13 @@ def _extract_id(url: str, resource_type: str) -> str:
 
 def _track_dict(track: dict, album_name: str, cover_url, year: str) -> dict:
     return {
-        "title": track["name"],
-        "artist": ", ".join(a["name"] for a in track["artists"]),
-        "album": album_name,
-        "duration_ms": track["duration_ms"],
-        "cover_url": cover_url,
-        "year": year,
+        "id":           track.get("id", ""),
+        "title":        track["name"],
+        "artist":       ", ".join(a["name"] for a in track["artists"]),
+        "album":        album_name,
+        "duration_ms":  track["duration_ms"],
+        "cover_url":    cover_url,
+        "year":         year,
         "track_number": track.get("track_number", 0),
     }
 
