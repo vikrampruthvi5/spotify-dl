@@ -32,6 +32,7 @@ from tagger import tag_file
 from recognizer import record_and_identify, identify_file
 from search import search_tracks, search_albums
 from language import detect_language
+from monitor import ResourceColumn, run_monitor
 
 console = Console()
 
@@ -72,6 +73,7 @@ _SLASH_COMMANDS = [
     ("\\song",      "Search track by title"),
     ("\\album",     "Browse album & download tracks"),
     ("\\organize",  "Toggle Language/ subfolder sorting"),
+    ("\\monitor",   "Live CPU / RAM / temperature display"),
 ]
 
 
@@ -455,6 +457,7 @@ def run_album_search(query: str, output_dir: str, quality: str, browser: str = N
         TaskProgressColumn(style="bold bright_yellow"),
         MofNCompleteColumn(),
         TimeElapsedColumn(),
+        ResourceColumn(),
         console=console,
         transient=False,
     ) as progress:
@@ -690,6 +693,7 @@ def run(url: str, output_dir: str, quality: str, jobs, browser: str = None, orga
         TaskProgressColumn(style="bold bright_yellow"),
         MofNCompleteColumn(),
         TimeElapsedColumn(),
+        ResourceColumn(),
         console=console,
         transient=False,
     ) as progress:
@@ -867,7 +871,10 @@ def main():
                 parts = url.split(None, 1)
                 cmd   = parts[0].lower()
                 query = parts[1].strip() if len(parts) > 1 else ""
-                if cmd == "\\organize":
+                if cmd == "\\monitor":
+                    run_monitor(console)
+                    continue
+                elif cmd == "\\organize":
                     organize = not organize
                     state = "[bold bright_green]ON[/bold bright_green]" if organize else "[bold yellow]OFF[/bold yellow]"
                     console.print(f"\n  Organize mode: {state}  [dim](songs sorted into Language/ subfolders)[/dim]\n")
