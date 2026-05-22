@@ -454,72 +454,92 @@ def run_album_search(query: str, output_dir: str, quality: str, browser: str = N
     step_print(3, 4, f"Downloading [bold bright_yellow]{len(tracks)}[/bold bright_yellow] track{'s' if len(tracks) != 1 else ''} with {worker_str}")
     console.print()
 
-    downloaded = skipped = failed = 0
+    pending = tracks
+    attempt = 0
 
-    with Progress(
-        SpinnerColumn(spinner_name="dots2", style="bright_cyan"),
-        TextColumn("[bold bright_white]{task.description}"),
-        BarColumn(bar_width=28, style="bright_blue", complete_style="bright_green", finished_style="bright_green"),
-        TaskProgressColumn(style="bold bright_yellow"),
-        MofNCompleteColumn(),
-        TimeElapsedColumn(),
-        ResourceColumn(),
-        console=console,
-        transient=False,
-    ) as progress:
-        task = progress.add_task("[bright_cyan]Downloading[/bright_cyan]", total=len(tracks))
+    while True:
+        attempt  += 1
+        cur_jobs  = min(len(pending), jobs)
+        downloaded = skipped = 0
+        failed_tracks = []
 
-        def _process(track: dict) -> str:
-            label_rich = (
-                f"[bright_cyan]{track['artist'][:30]}[/bright_cyan]"
-                f"[dim] - [/dim]"
-                f"[bright_white]{track['title'][:40]}[/bright_white]"
+        with Progress(
+            SpinnerColumn(spinner_name="dots2", style="bright_cyan"),
+            TextColumn("[bold bright_white]{task.description}"),
+            BarColumn(bar_width=28, style="bright_blue", complete_style="bright_green", finished_style="bright_green"),
+            TaskProgressColumn(style="bold bright_yellow"),
+            MofNCompleteColumn(),
+            TimeElapsedColumn(),
+            ResourceColumn(),
+            console=console,
+            transient=False,
+        ) as progress:
+            task = progress.add_task("[bright_cyan]Downloading[/bright_cyan]", total=len(pending))
+
+            def _process(track: dict) -> str:
+                label_rich = (
+                    f"[bright_cyan]{track['artist'][:30]}[/bright_cyan]"
+                    f"[dim] - [/dim]"
+                    f"[bright_white]{track['title'][:40]}[/bright_white]"
+                )
+                if organize:
+                    lang = detect_language(track["artist"], track["title"])
+                    track_dir = os.path.join(output_dir, lang)
+                    lang_tag = f"  [dim magenta]{lang}[/dim magenta]"
+                else:
+                    track_dir = output_dir
+                    lang_tag = ""
+                path = download_track(track, track_dir, quality, cookies_browser=browser)
+                if path == SKIP:
+                    console.print(f"  [bold yellow]o[/bold yellow]  {label_rich}{lang_tag}  [dim yellow](skipped)[/dim yellow]")
+                    status = "skip"
+                elif path is None:
+                    console.print(f"  [bold bright_red]x[/bold bright_red]  {label_rich}{lang_tag}  [dim red](failed)[/dim red]")
+                    failed_tracks.append(track)
+                    status = "fail"
+                else:
+                    tag_file(path, track)
+                    console.print(f"  [bold bright_green]v[/bold bright_green]  {label_rich}{lang_tag}")
+                    status = "ok"
+                progress.advance(task)
+                return status
+
+            if cur_jobs == 1:
+                for tr in pending:
+                    r = _process(tr)
+                    if r == "skip": skipped    += 1
+                    elif r == "ok": downloaded += 1
+            else:
+                with ThreadPoolExecutor(max_workers=cur_jobs) as ex:
+                    futures = {ex.submit(_process, t): t for t in pending}
+                    for future in as_completed(futures):
+                        r = future.result()
+                        if r == "skip": skipped    += 1
+                        elif r == "ok": downloaded += 1
+
+        console.print()
+        title_text = "Done" if attempt == 1 else f"Retry {attempt - 1} Done"
+        step_print(4, 4, (
+            f"{title_text}  "
+            f"[bold bright_green]{downloaded}[/bold bright_green] downloaded  "
+            f"[bold yellow]{skipped}[/bold yellow] skipped  "
+            f"[bold bright_red]{len(failed_tracks)}[/bold bright_red] failed"
+        ))
+        console.print()
+        console.print(f"  [dim]Saved to[/dim] [bright_cyan]{output_dir}[/bright_cyan]")
+
+        if failed_tracks:
+            console.print()
+            confirm = _prompt_simple(
+                f"◉  Retry {len(failed_tracks)} failed track{'s' if len(failed_tracks) != 1 else ''}? [Y/n]",
+                default="y",
             )
-            if organize:
-                lang = detect_language(track["artist"], track["title"])
-                track_dir = os.path.join(output_dir, lang)
-                lang_tag = f"  [dim magenta]{lang}[/dim magenta]"
-            else:
-                track_dir = output_dir
-                lang_tag = ""
-            path = download_track(track, track_dir, quality, cookies_browser=browser)
-            if path == SKIP:
-                console.print(f"  [bold yellow]o[/bold yellow]  {label_rich}{lang_tag}  [dim yellow](skipped)[/dim yellow]")
-                status = "skip"
-            elif path is None:
-                console.print(f"  [bold bright_red]x[/bold bright_red]  {label_rich}{lang_tag}  [dim red](failed)[/dim red]")
-                status = "fail"
-            else:
-                tag_file(path, track)
-                console.print(f"  [bold bright_green]v[/bold bright_green]  {label_rich}{lang_tag}")
-                status = "ok"
-            progress.advance(task)
-            return status
+            if confirm and confirm.strip().lower() not in ("n", "no"):
+                pending = failed_tracks
+                console.print()
+                continue
+        break
 
-        if jobs == 1:
-            for tr in tracks:
-                r = _process(tr)
-                if r == "skip":   skipped    += 1
-                elif r == "fail": failed     += 1
-                else:             downloaded += 1
-        else:
-            with ThreadPoolExecutor(max_workers=jobs) as ex:
-                futures = {ex.submit(_process, t): t for t in tracks}
-                for future in as_completed(futures):
-                    r = future.result()
-                    if r == "skip":   skipped    += 1
-                    elif r == "fail": failed     += 1
-                    else:             downloaded += 1
-
-    console.print()
-    step_print(4, 4, (
-        f"Done  "
-        f"[bold bright_green]{downloaded}[/bold bright_green] downloaded  "
-        f"[bold yellow]{skipped}[/bold yellow] skipped  "
-        f"[bold bright_red]{failed}[/bold bright_red] failed"
-    ))
-    console.print()
-    console.print(f"  [dim]Saved to[/dim] [bright_cyan]{output_dir}[/bright_cyan]")
     console.print()
 
 
@@ -689,94 +709,116 @@ def run(url: str, output_dir: str, quality: str, jobs, browser: str = None, orga
     step_print(3, 3, f"Downloading with {worker_str}{browser_str}")
     console.print()
 
-    tracks = info["tracks"]
-    downloaded = skipped = failed = 0
+    pending      = info["tracks"]
+    had_failures = False
+    attempt      = 0
 
-    with Progress(
-        SpinnerColumn(spinner_name="dots2", style="bright_cyan"),
-        TextColumn("[bold bright_white]{task.description}"),
-        BarColumn(bar_width=28, style="bright_blue", complete_style="bright_green", finished_style="bright_green"),
-        TaskProgressColumn(style="bold bright_yellow"),
-        MofNCompleteColumn(),
-        TimeElapsedColumn(),
-        ResourceColumn(),
-        console=console,
-        transient=False,
-    ) as progress:
-        task = progress.add_task("[bright_cyan]Downloading[/bright_cyan]", total=len(tracks))
+    while True:
+        attempt  += 1
+        cur_jobs  = min(len(pending), jobs)
+        downloaded = skipped = 0
+        failed_tracks = []
 
-        def process(track: dict) -> str:
-            label_rich = (
-                f"[bright_cyan]{track['artist'][:30]}[/bright_cyan]"
-                f"[dim] - [/dim]"
-                f"[bright_white]{track['title'][:40]}[/bright_white]"
+        with Progress(
+            SpinnerColumn(spinner_name="dots2", style="bright_cyan"),
+            TextColumn("[bold bright_white]{task.description}"),
+            BarColumn(bar_width=28, style="bright_blue", complete_style="bright_green", finished_style="bright_green"),
+            TaskProgressColumn(style="bold bright_yellow"),
+            MofNCompleteColumn(),
+            TimeElapsedColumn(),
+            ResourceColumn(),
+            console=console,
+            transient=False,
+        ) as progress:
+            task = progress.add_task("[bright_cyan]Downloading[/bright_cyan]", total=len(pending))
+
+            def process(track: dict) -> str:
+                label_rich = (
+                    f"[bright_cyan]{track['artist'][:30]}[/bright_cyan]"
+                    f"[dim] - [/dim]"
+                    f"[bright_white]{track['title'][:40]}[/bright_white]"
+                )
+                label_plain = f"{track['artist'][:30]} - {track['title'][:40]}"
+                if cur_jobs == 1:
+                    progress.update(task, description=f"  [bright_cyan]>[/bright_cyan]  {label_plain[:52]}")
+
+                if organize:
+                    lang = detect_language(track["artist"], track["title"])
+                    track_dir = os.path.join(output_dir, lang)
+                    lang_tag = f"  [dim magenta]{lang}[/dim magenta]"
+                else:
+                    track_dir = output_dir
+                    lang_tag = ""
+
+                path = download_track(track, track_dir, quality, cookies_browser=browser)
+
+                if path == SKIP:
+                    console.print(f"  [bold yellow]o[/bold yellow]  {label_rich}{lang_tag}  [dim yellow](skipped)[/dim yellow]")
+                    status = "skip"
+                elif path is None:
+                    console.print(f"  [bold bright_red]x[/bold bright_red]  {label_rich}{lang_tag}  [dim red](failed)[/dim red]")
+                    failed_tracks.append(track)
+                    status = "fail"
+                else:
+                    tag_file(path, track)
+                    console.print(f"  [bold bright_green]v[/bold bright_green]  {label_rich}{lang_tag}")
+                    status = "ok"
+
+                progress.advance(task)
+                return status
+
+            if cur_jobs == 1:
+                for track in pending:
+                    r = process(track)
+                    if r == "skip": skipped    += 1
+                    elif r == "ok": downloaded += 1
+            else:
+                with ThreadPoolExecutor(max_workers=cur_jobs) as ex:
+                    futures = {ex.submit(process, t): t for t in pending}
+                    for future in as_completed(futures):
+                        r = future.result()
+                        if r == "skip": skipped    += 1
+                        elif r == "ok": downloaded += 1
+
+        if failed_tracks:
+            had_failures = True
+
+        console.print()
+        border     = "bright_green" if not failed_tracks else "yellow"
+        title_text = "All Done!" if attempt == 1 else f"Retry {attempt - 1} Complete!"
+
+        summary = Table(show_header=False, box=None, padding=(0, 3))
+        summary.add_column(justify="center")
+        summary.add_column(justify="center")
+        summary.add_column(justify="center")
+        summary.add_row(
+            f"[bold bright_green]Downloaded[/bold bright_green]\n[bold bright_green]{downloaded}[/bold bright_green]",
+            f"[bold yellow]Skipped[/bold yellow]\n[bold yellow]{skipped}[/bold yellow]",
+            f"[bold bright_red]Failed[/bold bright_red]\n[bold bright_red]{len(failed_tracks)}[/bold bright_red]",
+        )
+
+        console.print(Panel(
+            Align.center(summary),
+            title=f"[bold {border}]  <<  {title_text}  >>  [/bold {border}]",
+            border_style=border,
+            box=box.DOUBLE_EDGE,
+            padding=(1, 4),
+        ))
+        console.print(f"  [dim]Saved to[/dim] [bright_cyan]{output_dir}[/bright_cyan]")
+
+        if failed_tracks:
+            console.print()
+            confirm = _prompt_simple(
+                f"♪  Retry {len(failed_tracks)} failed track{'s' if len(failed_tracks) != 1 else ''}? [Y/n]",
+                default="y",
             )
-            label_plain = f"{track['artist'][:30]} - {track['title'][:40]}"
-            if jobs == 1:
-                progress.update(task, description=f"  [bright_cyan]>[/bright_cyan]  {label_plain[:52]}")
+            if confirm and confirm.strip().lower() not in ("n", "no"):
+                pending = failed_tracks
+                console.print()
+                continue
+        break
 
-            if organize:
-                lang = detect_language(track["artist"], track["title"])
-                track_dir = os.path.join(output_dir, lang)
-                lang_tag = f"  [dim magenta]{lang}[/dim magenta]"
-            else:
-                track_dir = output_dir
-                lang_tag = ""
-
-            path = download_track(track, track_dir, quality, cookies_browser=browser)
-
-            if path == SKIP:
-                console.print(f"  [bold yellow]o[/bold yellow]  {label_rich}{lang_tag}  [dim yellow](skipped)[/dim yellow]")
-                status = "skip"
-            elif path is None:
-                console.print(f"  [bold bright_red]x[/bold bright_red]  {label_rich}{lang_tag}  [dim red](failed)[/dim red]")
-                status = "fail"
-            else:
-                tag_file(path, track)
-                console.print(f"  [bold bright_green]v[/bold bright_green]  {label_rich}{lang_tag}")
-                status = "ok"
-
-            progress.advance(task)
-            return status
-
-        if jobs == 1:
-            for track in tracks:
-                r = process(track)
-                if r == "skip":   skipped    += 1
-                elif r == "fail": failed     += 1
-                else:             downloaded += 1
-        else:
-            with ThreadPoolExecutor(max_workers=jobs) as ex:
-                futures = {ex.submit(process, t): t for t in tracks}
-                for future in as_completed(futures):
-                    r = future.result()
-                    if r == "skip":   skipped    += 1
-                    elif r == "fail": failed     += 1
-                    else:             downloaded += 1
-
-    console.print()
-    border = "bright_green" if failed == 0 else "yellow"
-
-    summary = Table(show_header=False, box=None, padding=(0, 3))
-    summary.add_column(justify="center")
-    summary.add_column(justify="center")
-    summary.add_column(justify="center")
-    summary.add_row(
-        f"[bold bright_green]Downloaded[/bold bright_green]\n[bold bright_green]{downloaded}[/bold bright_green]",
-        f"[bold yellow]Skipped[/bold yellow]\n[bold yellow]{skipped}[/bold yellow]",
-        f"[bold bright_red]Failed[/bold bright_red]\n[bold bright_red]{failed}[/bold bright_red]",
-    )
-
-    console.print(Panel(
-        Align.center(summary),
-        title=f"[bold {border}]  <<  All Done!  >>  [/bold {border}]",
-        border_style=border,
-        box=box.DOUBLE_EDGE,
-        padding=(1, 4),
-    ))
-    console.print(f"  [dim]Saved to[/dim] [bright_cyan]{output_dir}[/bright_cyan]")
-
-    if failed > 0 and not browser and not is_youtube_url(url):
+    if had_failures and not browser and not is_youtube_url(url):
         console.print()
         console.print(Panel(
             "YouTube is blocking downloads without browser cookies.\n"
