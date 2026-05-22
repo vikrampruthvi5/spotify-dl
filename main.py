@@ -503,7 +503,7 @@ def run_shazam(output_dir: str, quality: str, browser: str = None, duration: int
             track = identify_file(file)
         except Exception as e:
             console.print(f"\n  [bold bright_red]!!  Failed:[/bold bright_red] [red]{e}[/red]\n")
-            sys.exit(1)
+            return
     else:
         console.print(Panel(
             f"  Hold your device near the audio source.\n"
@@ -529,7 +529,7 @@ def run_shazam(output_dir: str, quality: str, browser: str = None, duration: int
                 track = record_and_identify(duration)
             except Exception as e:
                 console.print(f"\n  [bold bright_red]!!  Recognition failed:[/bold bright_red] [red]{e}[/red]\n")
-                sys.exit(1)
+                return
             progress.update(rec_task, description="[bright_green]Identified![/bright_green]")
 
         step_print(1, 3, "Audio recorded and sent to Shazam")
@@ -545,7 +545,7 @@ def run_shazam(output_dir: str, quality: str, browser: str = None, duration: int
             box=box.DOUBLE_EDGE,
         ))
         console.print()
-        sys.exit(1)
+        return
 
     color = "bright_magenta"
     t = Table(show_header=False, box=box.SIMPLE, padding=(0, 1))
@@ -589,7 +589,7 @@ def run_shazam(output_dir: str, quality: str, browser: str = None, duration: int
 
     if confirm and confirm.strip().lower() in ("n", "no"):
         console.print("\n  [dim]Cancelled.[/dim]\n")
-        sys.exit(0)
+        return
 
     console.print()
     step_print(2, 3, f"Matched  [bold bright_magenta]{track['artist']}[/bold bright_magenta]  –  [bold bright_white]{track['title']}[/bold bright_white]")
@@ -626,7 +626,7 @@ def run(url: str, output_dir: str, quality: str, jobs, browser: str = None):
             info = get_yt_info(url)
         except Exception as e:
             console.print(f"\n  [bold bright_red]!!  Failed:[/bold bright_red] [red]{e}[/red]\n")
-            sys.exit(1)
+            return
     else:
         check_credentials()
         step_print(1, 3, f"Connecting to Spotify  [dim]{url}[/dim]")
@@ -634,10 +634,10 @@ def run(url: str, output_dir: str, quality: str, jobs, browser: str = None):
             info = get_spotify_info(url)
         except ValueError as e:
             console.print(f"\n  [bold bright_red]!!  Error:[/bold bright_red] [red]{e}[/red]\n")
-            sys.exit(1)
+            return
         except Exception as e:
             console.print(f"\n  [bold bright_red]!!  Failed:[/bold bright_red] [red]{e}[/red]\n")
-            sys.exit(1)
+            return
 
     console.print()
     print_source_info(info)
@@ -804,6 +804,7 @@ def main():
     args = parser.parse_args()
 
     try:
+        # One-shot modes: CLI URL arg or --shazam flags exit after completion
         if args.shazam or args.shazam_file:
             run_shazam(
                 args.output, args.quality,
@@ -813,28 +814,35 @@ def main():
             )
             return
 
-        url = args.url
-        if not url:
+        if args.url:
+            run(args.url, args.output, args.quality, args.jobs, browser=args.browser)
+            return
+
+        # Interactive loop — keeps running until ESC at the main prompt
+        while True:
             url = get_url_interactive()
             if not url:
                 console.print("\n  [dim]Bye![/dim]\n")
-                sys.exit(0)
+                break
 
-        if url.startswith("\\"):
-            parts = url.split(None, 1)
-            cmd   = parts[0].lower()
-            query = parts[1].strip() if len(parts) > 1 else ""
-            if cmd == "\\shazam":
-                run_shazam(args.output, args.quality, browser=args.browser, duration=args.listen_duration)
-            elif cmd == "\\song":
-                run_song_search(query, args.output, args.quality, browser=args.browser)
-            elif cmd == "\\album":
-                run_album_search(query, args.output, args.quality, browser=args.browser)
+            if url.startswith("\\"):
+                parts = url.split(None, 1)
+                cmd   = parts[0].lower()
+                query = parts[1].strip() if len(parts) > 1 else ""
+                if cmd == "\\shazam":
+                    run_shazam(args.output, args.quality, browser=args.browser, duration=args.listen_duration)
+                elif cmd == "\\song":
+                    run_song_search(query, args.output, args.quality, browser=args.browser)
+                elif cmd == "\\album":
+                    run_album_search(query, args.output, args.quality, browser=args.browser)
+                else:
+                    console.print(f"\n  [bold red]Unknown command:[/bold red] {cmd}\n")
             else:
-                console.print(f"\n  [bold red]Unknown command:[/bold red] {cmd}\n")
-            return
+                run(url, args.output, args.quality, args.jobs, browser=args.browser)
 
-        run(url, args.output, args.quality, args.jobs, browser=args.browser)
+            console.print(Rule(style="dim bright_black"))
+            console.print()
+
     except KeyboardInterrupt:
         console.print("\n\n  [dim]Interrupted.[/dim]\n")
         sys.exit(0)
