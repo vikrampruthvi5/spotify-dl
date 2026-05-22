@@ -188,7 +188,7 @@ export const api = {
   watcherStatus: () =>
     fetch(`${BASE}/watcher/status`).then((r) => _json<WatcherStatus>(r)),
 
-  watcherStart: (body: { quality?: string; organize?: boolean; poll_interval_mins?: number }) =>
+  watcherStart: (body: { quality?: string; browser?: string | null; organize?: boolean; poll_interval_mins?: number }) =>
     fetch(`${BASE}/watcher/start`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),

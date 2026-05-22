@@ -10,6 +10,7 @@ thread pool and progress is streamed to the client via Server-Sent Events (SSE).
 import asyncio
 import json
 import os
+import re
 import uuid
 import warnings
 from concurrent.futures import ThreadPoolExecutor, as_completed as futures_done
@@ -482,6 +483,14 @@ async def watcher_check():
     return {"triggered": True}
 
 
+_RICH_TAG = re.compile(r"\[/?[a-z0-9_ ]+\]")
+
+
+def _strip_rich(s: str) -> str:
+    """Strip Rich console markup tags like [bold red]…[/bold red] from a string."""
+    return _RICH_TAG.sub("", s)
+
+
 @app.get("/api/watcher/events")
 async def watcher_events():
     """SSE stream that forwards watcher notifications in real time."""
@@ -489,7 +498,7 @@ async def watcher_events():
         while True:
             while not _watcher.notifications.empty():
                 try:
-                    msg = _watcher.notifications.get_nowait()
+                    msg = _strip_rich(_watcher.notifications.get_nowait())
                     yield f"data: {json.dumps({'type': 'notification', 'message': msg})}\n\n"
                 except Exception:
                     break

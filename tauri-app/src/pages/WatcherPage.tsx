@@ -10,6 +10,9 @@ export default function WatcherPage({ outputDir, home }: Props) {
   const [addUrl, setAddUrl]       = useState("");
   const [addFolder, setAddFolder] = useState("");
   const [adding, setAdding]       = useState(false);
+  const [browser, setBrowser]     = useState<string>(
+    () => localStorage.getItem("spotidl.browser") ?? "chrome"
+  );
   const esRef = useRef<EventSource | null>(null);
 
   const refresh = async () => {
@@ -31,7 +34,11 @@ export default function WatcherPage({ outputDir, home }: Props) {
     if (status?.running) {
       await api.watcherStop();
     } else {
-      await api.watcherStart({ organize: false });
+      localStorage.setItem("spotidl.browser", browser);
+      await api.watcherStart({
+        browser:  browser === "none" ? null : browser,
+        organize: false,
+      });
     }
     await refresh();
   };
@@ -73,7 +80,20 @@ export default function WatcherPage({ outputDir, home }: Props) {
             {status?.running ? "RUNNING" : "STOPPED"}
           </span>
         </h1>
-        <div style={{ display:"flex", gap:8 }}>
+        <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+          {!status?.running && (
+            <select value={browser} onChange={e => setBrowser(e.target.value)}
+              title="Browser to read YouTube cookies from (avoids 403 errors)"
+              style={{ background:"var(--surface-2)", border:"1px solid var(--border)",
+                       color:"var(--text)", borderRadius:8, padding:"7px 10px", fontSize:13 }}>
+              <option value="chrome">cookies: chrome</option>
+              <option value="firefox">cookies: firefox</option>
+              <option value="safari">cookies: safari</option>
+              <option value="brave">cookies: brave</option>
+              <option value="edge">cookies: edge</option>
+              <option value="none">no cookies</option>
+            </select>
+          )}
           <button onClick={triggerCheck} disabled={!status?.running}
             style={{ background:"var(--surface-2)", color:"var(--text)",
                      padding:"8px 16px", border:"1px solid var(--border)" }}>
