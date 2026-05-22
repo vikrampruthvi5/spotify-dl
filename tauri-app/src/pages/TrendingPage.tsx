@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { api, streamJobEvents, type JobEvent,
          type TrendingResult, type TrendingTrack } from "../api/client";
+import PlaylistPickerModal from "../components/PlaylistPickerModal";
 
 interface Props { outputDir: string; quality: string; }
 
@@ -33,7 +34,40 @@ export default function TrendingPage({ outputDir, quality }: Props) {
   const [browser, setBrowser]     = useState<string>(
     () => localStorage.getItem("spotidl.browser") ?? "chrome"
   );
-  const esRef = useRef<EventSource | null>(null);
+  const [showPicker, setShowPicker] = useState(false);
+  const [authed, setAuthed]         = useState(false);
+  const [toast, setToast]           = useState("");
+  const [playingId, setPlayingId]   = useState<string | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const esRef    = useRef<EventSource | null>(null);
+
+  useEffect(() => {
+    api.authStatus().then(r => setAuthed(r.authenticated)).catch(() => {});
+  }, []);
+
+  // Cleanup audio on unmount
+  useEffect(() => () => { audioRef.current?.pause(); }, []);
+
+  const playPreview = (track: TrendingTrack) => {
+    if (!track.preview_url) {
+      setToast("Spotify did not provide a preview for this track.");
+      setTimeout(() => setToast(""), 2500);
+      return;
+    }
+    // Toggle: clicking the same track again pauses
+    if (playingId === track.id) {
+      audioRef.current?.pause();
+      setPlayingId(null);
+      return;
+    }
+    audioRef.current?.pause();
+    const a = new Audio(track.preview_url);
+    a.volume = 0.7;
+    a.onended = () => setPlayingId(null);
+    a.play().catch(() => setPlayingId(null));
+    audioRef.current = a;
+    setPlayingId(track.id);
+  };
 
   const load = async (r: string) => {
     setLoading(true); setError(""); setSelected(new Set());
@@ -174,7 +208,9 @@ export default function TrendingPage({ outputDir, quality }: Props) {
                 <TrackRow key={t.id} track={t} index={i + 1}
                   selected={selected.has(t.id)}
                   status={trackStatus[t.id]}
-                  onToggle={() => toggleOne(t.id)} />
+                  playing={playingId === t.id}
+                  onToggle={() => toggleOne(t.id)}
+                  onPlay={() => playPreview(t)} />
               ))}
             </div>
           </>
@@ -228,11 +264,43 @@ export default function TrendingPage({ outputDir, quality }: Props) {
                      padding:"8px 14px", border:"1px solid var(--border)" }}>
             Clear
           </button>
+          {authed && (
+            <button onClick={() => setShowPicker(true)} disabled={downloading}
+              style={{ background:"var(--surface-2)", color:"var(--text)",
+                       padding:"8px 16px", border:"1px solid var(--border)" }}>
+              + Spotify Playlist
+            </button>
+          )}
           <button onClick={downloadSelected} disabled={downloading}
             style={{ background:"var(--accent)", color:"#000",
                      padding:"9px 22px", fontWeight:600 }}>
             {downloading ? "Downloading…" : `Download ${selected.size}`}
           </button>
+        </div>
+      )}
+
+      {/* Add to Spotify Playlist modal */}
+      {showPicker && data && (
+        <PlaylistPickerModal
+          trackIds={Array.from(selected)}
+          defaultName={`${data.label} Trending · ${new Date().toLocaleDateString()}`}
+          onClose={() => setShowPicker(false)}
+          onSuccess={({ playlistName, added }) => {
+            setToast(`Added ${added} track${added === 1 ? "" : "s"} to "${playlistName}"`);
+            setTimeout(() => setToast(""), 4000);
+          }}
+        />
+      )}
+
+      {/* Toast */}
+      {toast && (
+        <div style={{
+          position:"fixed", bottom: selected.size > 0 ? 78 : 24, right:24,
+          background:"var(--surface)", border:"1px solid var(--accent)",
+          color:"var(--text)", padding:"10px 16px", borderRadius:10,
+          boxShadow:"0 8px 24px rgba(0,0,0,0.4)", fontSize:13, zIndex:50,
+        }}>
+          {toast}
         </div>
       )}
     </div>
@@ -245,11 +313,14 @@ interface RowProps {
   track: TrendingTrack;
   index: number;
   selected: boolean;
+  playing: boolean;
   status?: "ok" | "skip" | "fail";
   onToggle: () => void;
+  onPlay: () => void;
 }
 
-function TrackRow({ track, index, selected, status, onToggle }: RowProps) {
+function TrackRow({ track, index, selected, playing, status, onToggle, onPlay }: RowProps) {
+  const hasPreview = !!track.preview_url;
   return (
     <div
       onClick={onToggle}
@@ -271,12 +342,45 @@ function TrackRow({ track, index, selected, status, onToggle }: RowProps) {
         </span> : index}
       </span>
 
-      {track.cover_url ? (
-        <img src={track.cover_url} alt=""
-          style={{ width:40, height:40, borderRadius:4, objectFit:"cover" }} />
-      ) : (
-        <div style={{ width:40, height:40, borderRadius:4, background:"var(--surface-2)" }} />
-      )}
+      {/* Album art with play-on-hover overlay */}
+      <div onClick={e => { e.stopPropagation(); onPlay(); }}
+        title={hasPreview ? (playing ? "Pause preview" : "Play 30s preview") : "No preview available"}
+        style={{
+          width:40, height:40, borderRadius:4, position:"relative",
+          background:"var(--surface-2)", overflow:"hidden",
+          cursor: hasPreview ? "pointer" : "default", flexShrink:0,
+        }}>
+        {track.cover_url && (
+          <img src={track.cover_url} alt=""
+            style={{ width:"100%", height:"100%", objectFit:"cover",
+                     opacity: playing ? 0.4 : 1, transition:"opacity 0.15s" }} />
+        )}
+        <div style={{
+          position:"absolute", inset:0, display:"flex",
+          alignItems:"center", justifyContent:"center",
+          background: playing
+            ? "rgba(0,0,0,0.4)"
+            : hasPreview ? "rgba(0,0,0,0)" : "rgba(0,0,0,0)",
+          color: hasPreview ? "#fff" : "var(--text-dim)",
+          fontSize:14, opacity: playing ? 1 : 0,
+          transition:"opacity 0.15s",
+        }}
+          className={hasPreview ? "play-hover" : ""}>
+          {playing ? "❚❚" : "▶"}
+        </div>
+        {!playing && hasPreview && (
+          <div style={{
+            position:"absolute", inset:0, display:"flex",
+            alignItems:"center", justifyContent:"center",
+            background:"rgba(0,0,0,0.55)", color:"#fff", fontSize:13,
+            opacity:0, transition:"opacity 0.15s",
+          }}
+          onMouseEnter={e => (e.currentTarget.style.opacity = "1")}
+          onMouseLeave={e => (e.currentTarget.style.opacity = "0")}>
+            ▶
+          </div>
+        )}
+      </div>
 
       <span style={{ overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
         {track.title}

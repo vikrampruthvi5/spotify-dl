@@ -69,6 +69,7 @@ def get_trending(region: str, limit: int = 50) -> dict:
             "cover_url":   images[0]["url"] if images else None,
             "popularity":  t.get("popularity", 0),
             "spotify_url": (t.get("external_urls") or {}).get("spotify"),
+            "preview_url": t.get("preview_url"),  # 30 s MP3 preview, may be null
         })
 
     pl_images = pl.get("images") or []

@@ -68,6 +68,26 @@ export interface TrendingTrack {
   cover_url?: string;
   popularity: number;
   spotify_url?: string;
+  preview_url?: string | null;
+}
+
+export interface SpotifyProfile {
+  id: string;
+  display_name: string;
+  avatar_url: string | null;
+  followers: number;
+  url?: string;
+}
+
+export interface SpotifyUserPlaylist {
+  id: string;
+  name: string;
+  tracks_total: number;
+  url?: string;
+  cover_url?: string | null;
+  owner?: string;
+  collaborative?: boolean;
+  public?: boolean;
 }
 
 export interface TrendingResult {
@@ -180,6 +200,40 @@ export const api = {
     fetch(`${BASE}/trending/regions`).then((r) =>
       _json<{ id: string; label: string; language: string; query: string }[]>(r)
     ),
+
+  // ── Spotify OAuth ──────────────────────────────────────────────────────────
+  authStatus: () =>
+    fetch(`${BASE}/auth/status`).then((r) =>
+      _json<{ authenticated: boolean; profile: SpotifyProfile | null }>(r)
+    ),
+
+  authLoginUrl: () =>
+    fetch(`${BASE}/auth/login`).then((r) => _json<{ url: string }>(r)),
+
+  authLogout: () =>
+    fetch(`${BASE}/auth/logout`, { method: "POST" }).then((r) =>
+      _json<{ authenticated: boolean }>(r)
+    ),
+
+  // ── User Spotify playlists ─────────────────────────────────────────────────
+  listUserPlaylists: () =>
+    fetch(`${BASE}/spotify/playlists`).then((r) =>
+      _json<{ playlists: SpotifyUserPlaylist[] }>(r)
+    ),
+
+  createUserPlaylist: (body: { name: string; description?: string; public?: boolean }) =>
+    fetch(`${BASE}/spotify/playlists`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }).then((r) =>
+      _json<{ id: string; name: string; url?: string; tracks_total: number }>(r)
+    ),
+
+  addTracksToUserPlaylist: (body: { playlist_id: string; track_ids: string[] }) =>
+    fetch(`${BASE}/spotify/playlists/add-tracks`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }).then((r) => _json<{ added: number }>(r)),
 
   getLibrary: (dir: string) =>
     fetch(`${BASE}/library?dir=${encodeURIComponent(dir)}`).then((r) =>

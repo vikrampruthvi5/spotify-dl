@@ -24,22 +24,22 @@ from prompt_toolkit.styles import Style as PtStyle
 from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.completion import Completer, Completion
 
-from config import DEFAULT_OUTPUT_DIR, DEFAULT_QUALITY, SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET
-from spotify_client import get_info as get_spotify_info
-from youtube import get_info as get_yt_info, is_youtube_url
-from downloader import download_track, SKIP
-from tagger import tag_file
-from recognizer import record_and_identify, identify_file
-from search import search_tracks, search_albums
-from language import detect_language
-from monitor import ResourceColumn, run_monitor
-from watcher import PlaylistWatcher, load_watched, add_playlist, remove_playlist, update_playlist
-from analyzer import analyze_and_tag, analyze_directory
-from rekordbox import export_rekordbox_xml
-from dupes import find_duplicates
-from scanner import scan_library
-from crate import build_crate
-from setcheck import check_set
+from core.config import DEFAULT_OUTPUT_DIR, DEFAULT_QUALITY, SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET
+from core.spotify_client import get_info as get_spotify_info
+from core.youtube import get_info as get_yt_info, is_youtube_url
+from core.downloader import download_track, SKIP
+from core.tagger import tag_file
+from core.recognizer import record_and_identify, identify_file
+from core.search import search_tracks, search_albums
+from core.language import detect_language
+from core.monitor import ResourceColumn, run_monitor
+from core.watcher import PlaylistWatcher, load_watched, add_playlist, remove_playlist, update_playlist
+from core.analyzer import analyze_and_tag, analyze_directory
+from core.rekordbox import export_rekordbox_xml
+from core.dupes import find_duplicates
+from core.scanner import scan_library
+from core.crate import build_crate
+from core.setcheck import check_set
 
 console = Console()
 

@@ -4,10 +4,19 @@
 .eggs/
 __pycache__/
 *.py[cod]
-*.egg-info/
 dist/
 build/
 .venv/
 venv/
 env/
 *.log
+
+# Node / Vite / Tauri
+node_modules/
+tauri-app/dist/
+tauri-app/src-tauri/target/
+tauri-app/src-tauri/Cargo.lock
+*.tsbuildinfo
+
+# OS
+.DS_Store

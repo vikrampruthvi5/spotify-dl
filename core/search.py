@@ -1,6 +1,6 @@
 import spotipy
 from spotipy.oauth2 import SpotifyClientCredentials
-from config import SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET
+from .config import SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET
 
 
 def _sp():

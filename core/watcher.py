@@ -7,10 +7,10 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import psutil
 
-from spotify_client import get_playlist_info
-from downloader import download_track, SKIP
-from tagger import tag_file
-from language import detect_language
+from .spotify_client import get_playlist_info
+from .downloader import download_track, SKIP
+from .tagger import tag_file
+from .language import detect_language
 
 _CONFIG_DIR  = os.path.expanduser("~/.spotidl")
 _CONFIG_FILE = os.path.join(_CONFIG_DIR, "watched.json")

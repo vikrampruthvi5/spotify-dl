@@ -8,6 +8,8 @@ import DJToolsPage   from "./pages/DJToolsPage";
 import WatcherPage   from "./pages/WatcherPage";
 import TrendingPage  from "./pages/TrendingPage";
 
+import AccountBadge  from "./components/AccountBadge";
+
 type Page = "download" | "trending" | "library" | "dj" | "watcher";
 
 const NAV: { id: Page; label: string; icon: string }[] = [
@@ -98,12 +100,13 @@ export default function App() {
         {/* Footer */}
         <div style={{
           marginTop: "auto",
-          padding: "16px 20px 0",
+          paddingTop: 12,
           borderTop: "1px solid var(--border)",
-          color: "var(--text-dim)",
-          fontSize: 11,
         }}>
-          v1.1.0 · {config?.quality ?? "320"}kbps
+          <AccountBadge />
+          <div style={{ padding:"6px 20px 12px", color: "var(--text-dim)", fontSize: 11 }}>
+            v1.1.0 · {config?.quality ?? "320"}kbps
+          </div>
         </div>
       </nav>
 

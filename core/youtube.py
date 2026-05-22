@@ -1,6 +1,6 @@
 import re
 import yt_dlp
-from downloader import _SilentLogger, _USER_AGENT
+from .downloader import _SilentLogger, _USER_AGENT
 
 # Web client for metadata (richer fields); android client is only needed for actual downloads
 _YDL_META = {

@@ -20,13 +20,17 @@ warnings.filterwarnings("ignore")
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from core.config import DEFAULT_OUTPUT_DIR, DEFAULT_QUALITY
 from core.spotify_client import get_info as get_spotify_info, get_tracks_by_ids
 from core.trending import get_trending, list_regions
+from core.auth import (
+    authorize_url, handle_callback, get_user_client,
+    get_user_profile, logout as auth_logout,
+)
 from core.youtube import get_info as get_yt_info, is_youtube_url
 from core.downloader import download_track, SKIP
 from core.tagger import tag_file
@@ -360,6 +364,149 @@ async def trending(region: str = Query("bollywood")):
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Spotify OAuth ─────────────────────────────────────────────────────────────
+
+@app.get("/api/auth/status")
+async def auth_status():
+    profile = get_user_profile()
+    return {"authenticated": bool(profile), "profile": profile}
+
+
+@app.get("/api/auth/login")
+async def auth_login():
+    """Returns the Spotify authorization URL for the frontend to open."""
+    return {"url": authorize_url()}
+
+
+@app.get("/api/auth/callback")
+async def auth_callback(code: Optional[str] = None, error: Optional[str] = None):
+    """Spotify redirects here after the user authorizes (or denies) the app."""
+    if error:
+        return HTMLResponse(_auth_html(False, error), status_code=400)
+    if not code:
+        return HTMLResponse(_auth_html(False, "Missing code"), status_code=400)
+    try:
+        handle_callback(code)
+        return HTMLResponse(_auth_html(True))
+    except Exception as e:
+        return HTMLResponse(_auth_html(False, str(e)), status_code=500)
+
+
+@app.post("/api/auth/logout")
+async def auth_logout_endpoint():
+    auth_logout()
+    return {"authenticated": False}
+
+
+_AUTH_OK_HTML = """<!doctype html><html><body style="font-family:-apple-system,sans-serif;
+background:#0d0d0d;color:#f0f0f0;display:flex;align-items:center;justify-content:center;
+height:100vh;margin:0;flex-direction:column;gap:16px;">
+<div style="font-size:48px;color:#1db954;">&#10003;</div>
+<h1 style="font-weight:600;margin:0;">Connected to Spotify</h1>
+<p style="color:#888;margin:0;">You can close this window and return to SpotiDL.</p>
+<script>setTimeout(()=>window.close(),1500);</script>
+</body></html>"""
+
+
+def _auth_html(ok: bool, error: str = "") -> str:
+    """Self-closing HTML page shown after the Spotify auth redirect."""
+    if ok:
+        return _AUTH_OK_HTML
+    return (
+        '<!doctype html><html><body style="font-family:-apple-system,sans-serif;'
+        'background:#0d0d0d;color:#f0f0f0;display:flex;align-items:center;'
+        'justify-content:center;height:100vh;margin:0;flex-direction:column;gap:12px;">'
+        '<div style="font-size:48px;color:#ef4444;">&#10005;</div>'
+        '<h1 style="font-weight:600;margin:0;">Authorization failed</h1>'
+        f'<p style="color:#888;max-width:480px;text-align:center;">{error}</p>'
+        '<p style="color:#666;font-size:12px;max-width:480px;text-align:center;">'
+        'Make sure <code style="background:#1f1f1f;padding:2px 6px;border-radius:4px;">'
+        'http://127.0.0.1:8765/api/auth/callback</code> is added to your Spotify app\'s '
+        'Redirect URIs at developer.spotify.com/dashboard.</p>'
+        '</body></html>'
+    )
+
+
+# ── User Spotify playlists (write access) ─────────────────────────────────────
+
+class CreatePlaylistRequest(BaseModel):
+    name:        str
+    description: str = ""
+    public:      bool = False
+
+
+class AddTracksToPlaylistRequest(BaseModel):
+    playlist_id: str
+    track_ids:   list[str]
+
+
+@app.get("/api/spotify/playlists")
+async def list_user_playlists():
+    sp = get_user_client()
+    if not sp:
+        raise HTTPException(status_code=401, detail="Not authenticated with Spotify")
+
+    def _fetch():
+        results = sp.current_user_playlists(limit=50)
+        return [
+            {
+                "id":            p["id"],
+                "name":          p["name"],
+                "tracks_total":  p["tracks"]["total"],
+                "url":           (p.get("external_urls") or {}).get("spotify"),
+                "cover_url":     (p["images"][0]["url"] if p.get("images") else None),
+                "owner":         (p.get("owner") or {}).get("display_name", ""),
+                "collaborative": p.get("collaborative", False),
+                "public":        p.get("public", False),
+            }
+            for p in (results.get("items") or [])
+        ]
+
+    loop = asyncio.get_running_loop()
+    return {"playlists": await loop.run_in_executor(_executor, _fetch)}
+
+
+@app.post("/api/spotify/playlists")
+async def create_user_playlist(req: CreatePlaylistRequest):
+    sp = get_user_client()
+    if not sp:
+        raise HTTPException(status_code=401, detail="Not authenticated with Spotify")
+    loop = asyncio.get_running_loop()
+
+    def _create():
+        user = sp.current_user()
+        pl   = sp.user_playlist_create(
+            user["id"], req.name, public=req.public, description=req.description
+        )
+        return {
+            "id":           pl["id"],
+            "name":         pl["name"],
+            "url":          (pl.get("external_urls") or {}).get("spotify"),
+            "tracks_total": 0,
+        }
+
+    return await loop.run_in_executor(_executor, _create)
+
+
+@app.post("/api/spotify/playlists/add-tracks")
+async def add_tracks_to_user_playlist(req: AddTracksToPlaylistRequest):
+    sp = get_user_client()
+    if not sp:
+        raise HTTPException(status_code=401, detail="Not authenticated with Spotify")
+    if not req.track_ids:
+        raise HTTPException(status_code=400, detail="track_ids is empty")
+
+    def _add():
+        uris = [f"spotify:track:{tid}" for tid in req.track_ids]
+        # Spotify limits playlist_add_items to 100 per call
+        for i in range(0, len(uris), 100):
+            sp.playlist_add_items(req.playlist_id, uris[i : i + 100])
+        return {"added": len(uris)}
+
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(_executor, _add)
 
 
 @app.get("/api/jobs/{job_id}/events")
