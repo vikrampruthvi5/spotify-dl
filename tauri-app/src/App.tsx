@@ -19,7 +19,7 @@ const NAV: { id: Page; label: string; icon: string }[] = [
 export default function App() {
   const [page, setPage]       = useState<Page>("download");
   const [ready, setReady]     = useState(false);
-  const [config, setConfig]   = useState<{ output_dir: string; quality: string } | null>(null);
+  const [config, setConfig]   = useState<{ output_dir: string; quality: string; home: string; desktop: string } | null>(null);
 
   useEffect(() => {
     api.health()
@@ -111,8 +111,8 @@ export default function App() {
           <>
             {page === "download" && <DownloadPage outputDir={config.output_dir} quality={config.quality} />}
             {page === "library"  && <LibraryPage  outputDir={config.output_dir} />}
-            {page === "dj"       && <DJToolsPage  outputDir={config.output_dir} />}
-            {page === "watcher"  && <WatcherPage  outputDir={config.output_dir} />}
+            {page === "dj"       && <DJToolsPage  outputDir={config.output_dir} desktop={config.desktop} />}
+            {page === "watcher"  && <WatcherPage  outputDir={config.output_dir} home={config.home} />}
           </>
         )}
       </main>

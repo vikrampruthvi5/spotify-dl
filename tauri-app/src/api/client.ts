@@ -122,7 +122,7 @@ export const api = {
 
   config: () =>
     fetch(`${BASE}/config`).then((r) =>
-      _json<{ output_dir: string; quality: string }>(r)
+      _json<{ output_dir: string; quality: string; home: string; desktop: string }>(r)
     ),
 
   getInfo: (url: string) =>

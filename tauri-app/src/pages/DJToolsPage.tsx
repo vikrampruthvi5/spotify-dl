@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { api, streamJobEvents, type JobEvent } from "../api/client";
 
-interface Props { outputDir: string; }
+interface Props { outputDir: string; desktop: string; }
 
 type Tool = "analyze" | "scan" | "dupes" | "crate" | "rekordbox" | "setcheck";
 
@@ -14,7 +14,7 @@ const TOOLS: { id: Tool; icon: string; label: string; desc: string }[] = [
   { id:"setcheck",  icon:"✓",  label:"Set Check",          desc:"Compare a Spotify playlist against your local library." },
 ];
 
-export default function DJToolsPage({ outputDir }: Props) {
+export default function DJToolsPage({ outputDir, desktop }: Props) {
   const [active, setActive]   = useState<Tool>("analyze");
   const [output, setOutput]   = useState<string[]>([]);
   const [busy, setBusy]       = useState(false);
@@ -114,7 +114,7 @@ export default function DJToolsPage({ outputDir }: Props) {
     try {
       const res = await api.rekordbox({
         directory: outputDir,
-        output_path: `${process.env.HOME ?? "~/Desktop"}/rekordbox.xml`,
+        output_path: `${desktop}/rekordbox.xml`,
       });
       log(`Exported ${res.exported} tracks → ${res.path}`);
     } catch (e: unknown) { log(`Error: ${String(e)}`); }

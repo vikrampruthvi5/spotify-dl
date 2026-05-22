@@ -23,19 +23,19 @@ from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from config import DEFAULT_OUTPUT_DIR, DEFAULT_QUALITY
-from spotify_client import get_info as get_spotify_info
-from youtube import get_info as get_yt_info, is_youtube_url
-from downloader import download_track, SKIP
-from tagger import tag_file
-from analyzer import analyze_and_tag, analyze_directory
-from language import detect_language
-from watcher import PlaylistWatcher, load_watched, add_playlist, remove_playlist, update_playlist
-from rekordbox import export_rekordbox_xml
-from dupes import find_duplicates
-from scanner import scan_library
-from crate import build_crate
-from setcheck import check_set
+from core.config import DEFAULT_OUTPUT_DIR, DEFAULT_QUALITY
+from core.spotify_client import get_info as get_spotify_info
+from core.youtube import get_info as get_yt_info, is_youtube_url
+from core.downloader import download_track, SKIP
+from core.tagger import tag_file
+from core.analyzer import analyze_and_tag, analyze_directory
+from core.language import detect_language
+from core.watcher import PlaylistWatcher, load_watched, add_playlist, remove_playlist, update_playlist
+from core.rekordbox import export_rekordbox_xml
+from core.dupes import find_duplicates
+from core.scanner import scan_library
+from core.crate import build_crate
+from core.setcheck import check_set
 
 # ── App setup ─────────────────────────────────────────────────────────────────
 
@@ -202,7 +202,12 @@ async def health():
 
 @app.get("/api/config")
 async def get_config():
-    return {"output_dir": DEFAULT_OUTPUT_DIR, "quality": DEFAULT_QUALITY}
+    return {
+        "output_dir": DEFAULT_OUTPUT_DIR,
+        "quality":    DEFAULT_QUALITY,
+        "home":       os.path.expanduser("~"),
+        "desktop":    os.path.join(os.path.expanduser("~"), "Desktop"),
+    }
 
 
 @app.get("/api/info")

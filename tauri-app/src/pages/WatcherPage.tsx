@@ -1,9 +1,9 @@
 import { useState, useEffect, useRef } from "react";
 import { api, streamWatcherEvents, type WatchedPlaylist, type WatcherStatus } from "../api/client";
 
-interface Props { outputDir: string; }
+interface Props { outputDir: string; home: string; }
 
-export default function WatcherPage({ outputDir }: Props) {
+export default function WatcherPage({ outputDir, home }: Props) {
   const [status, setStatus]       = useState<WatcherStatus | null>(null);
   const [playlists, setPlaylists] = useState<WatchedPlaylist[]>([]);
   const [log, setLog]             = useState<string[]>([]);
@@ -125,7 +125,7 @@ export default function WatcherPage({ outputDir }: Props) {
               </div>
               <span style={{ fontSize:11, color:"var(--text-dim)", overflow:"hidden",
                              textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
-                {p.folder.replace(process.env.HOME ?? "", "~")}
+                {p.folder.replace(home, "~")}
               </span>
               <span style={{ textAlign:"right", color:"var(--yellow)", fontWeight:600 }}>
                 {p.total_tracks ?? "?"}
