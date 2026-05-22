@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=44"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "spotidl"
+version = "1.0.0"
+description = "Download Spotify music as MP3s via YouTube"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "spotipy>=2.23.0",
+    "yt-dlp>=2024.1.0",
+    "mutagen>=1.47.0",
+    "rich>=13.7.0",
+    "pyfiglet>=1.0.2",
+    "requests>=2.31.0",
+    "python-dotenv>=1.0.0",
+    "prompt_toolkit>=3.0.0",
+    "shazamio>=0.6.0",
+    "sounddevice>=0.4.6",
+    "scipy>=1.11.0",
+    "langdetect>=1.0.9",
+    "psutil>=5.9.0",
+]
+
+[project.scripts]
+dj = "main:main"
+
+[tool.setuptools]
+py-modules = [
+    "main",
+    "config",
+    "downloader",
+    "language",
+    "monitor",
+    "recognizer",
+    "search",
+    "spotify_client",
+    "tagger",
+    "youtube",
+]
