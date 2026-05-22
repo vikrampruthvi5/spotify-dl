@@ -821,7 +821,7 @@ def run_configure(watcher, output_dir: str):
             border_style=color,
             box=box.DOUBLE_EDGE,
         ))
-        console.print("  [dim]add · edit <#> · remove <#> · start · stop · check · back[/dim]")
+        console.print("  [dim]add · edit <#> · remove <#> · count <#> · start · stop · check · back[/dim]")
         console.print()
 
         resp = _prompt_simple("♬  Action")
@@ -915,6 +915,53 @@ def run_configure(watcher, output_dir: str):
             if remove_playlist(entry["url"]):
                 console.print(f"\n  [bold bright_green]Removed:[/bold bright_green] [bright_cyan]{entry['name']}[/bright_cyan]\n")
 
+        elif action == "count":
+            if not arg:
+                arg = _prompt_simple("♬  Playlist # to count") or ""
+            try:
+                idx = int(arg) - 1
+                if not 0 <= idx < len(playlists):
+                    raise ValueError
+            except ValueError:
+                console.print("\n  [bold red]Invalid number.[/bold red]\n")
+                continue
+            entry = playlists[idx]
+            console.print(f"\n  [dim]Fetching Spotify playlist...[/dim]")
+            try:
+                info         = get_spotify_info(entry["url"])
+                spotify_count = info["total_tracks"]
+            except Exception as e:
+                console.print(f"\n  [bold red]Error fetching playlist:[/bold red] {e}\n")
+                continue
+            folder = entry["folder"]
+            local_count = len([
+                f for f in os.listdir(folder) if f.lower().endswith(".mp3")
+            ]) if os.path.isdir(folder) else 0
+
+            color = "bright_cyan"
+            ct = Table(show_header=False, box=box.SIMPLE, padding=(0, 2))
+            ct.add_column(style=f"bold {color}", min_width=18)
+            ct.add_column(style="bold bright_white", justify="right", min_width=6)
+            ct.add_row("Spotify tracks",  f"[bold bright_yellow]{spotify_count}[/bold bright_yellow]")
+            ct.add_row("Local MP3 files", f"[bold bright_green]{local_count}[/bold bright_green]")
+            if spotify_count > local_count:
+                gap = spotify_count - local_count
+                ct.add_row("Missing locally", f"[bold bright_red]{gap}[/bold bright_red]")
+            elif local_count >= spotify_count:
+                ct.add_row("Status", "[bold bright_green]Up to date[/bold bright_green]")
+            console.print(Panel(
+                ct,
+                title=f"[bold {color}]  ♬  {entry['name']}  [/bold {color}]",
+                border_style=color,
+                box=box.DOUBLE_EDGE,
+                padding=(0, 1),
+            ))
+            if not os.path.isdir(folder):
+                console.print(f"  [dim yellow]Folder not found:[/dim yellow] {folder}")
+            else:
+                console.print(f"  [dim]Folder:[/dim] [bright_cyan]{folder}[/bright_cyan]")
+            console.print()
+
         elif action == "start":
             if not watcher.is_running():
                 watcher.start()
@@ -942,7 +989,7 @@ def run_configure(watcher, output_dir: str):
         else:
             console.print(
                 f"\n  [bold red]Unknown action:[/bold red] {action}  "
-                f"[dim](add / edit / remove / start / stop / check / back)[/dim]\n"
+                f"[dim](add / edit / remove / count / start / stop / check / back)[/dim]\n"
             )
 
 
