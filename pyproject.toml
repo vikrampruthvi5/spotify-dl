@@ -1,11 +1,11 @@
 [build-system]
-requires = ["setuptools>=44"]
+requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "spotidl"
-version = "1.0.0"
-description = "Download Spotify music as MP3s via YouTube"
+version = "1.1.0"
+description = "Download Spotify music as MP3s via YouTube — with a DJ toolkit and native GUI"
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
@@ -23,28 +23,14 @@ dependencies = [
     "langdetect>=1.0.9",
     "psutil>=5.9.0",
     "librosa>=0.10.0",
+    "fastapi>=0.110.0",
+    "uvicorn>=0.29.0",
 ]
 
 [project.scripts]
-dj = "main:main"
+dj        = "cli.main:main"
+dj-server = "server.app:start"
 
-[tool.setuptools]
-py-modules = [
-    "main",
-    "config",
-    "downloader",
-    "language",
-    "monitor",
-    "recognizer",
-    "search",
-    "spotify_client",
-    "tagger",
-    "watcher",
-    "youtube",
-    "analyzer",
-    "rekordbox",
-    "dupes",
-    "scanner",
-    "crate",
-    "setcheck",
-]
+[tool.setuptools.packages.find]
+where   = ["."]
+include = ["core*", "cli*", "server*"]

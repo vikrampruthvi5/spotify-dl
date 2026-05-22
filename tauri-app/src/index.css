@@ -1,0 +1,55 @@
+/* Design tokens */
+:root {
+  --bg:          #0d0d0d;
+  --surface:     #171717;
+  --surface-2:   #1f1f1f;
+  --border:      #2a2a2a;
+  --accent:      #1db954;   /* Spotify green */
+  --accent-2:    #a855f7;   /* purple for DJ */
+  --text:        #f0f0f0;
+  --text-dim:    #888;
+  --red:         #ef4444;
+  --yellow:      #eab308;
+  --radius:      8px;
+  --radius-lg:   12px;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.5;
+  overflow: hidden;
+  user-select: none;
+}
+
+button {
+  cursor: pointer;
+  border: none;
+  border-radius: var(--radius);
+  font-size: 13px;
+  font-weight: 500;
+  transition: opacity 0.15s, background 0.15s;
+}
+button:hover   { opacity: 0.85; }
+button:active  { opacity: 0.7; }
+button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+input, textarea {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: 13px;
+  padding: 6px 10px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+input:focus, textarea:focus { border-color: var(--accent); }
+
+::-webkit-scrollbar       { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
