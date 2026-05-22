@@ -1,164 +1,177 @@
 # SpotiDL
 
-Download Spotify playlists, albums, and tracks as high-quality MP3 files.  
-Searches YouTube for each track, downloads the best audio, and writes full ID3 metadata (title, artist, album, year, track number, cover art).
+A terminal app for downloading Spotify playlists, albums, and tracks as MP3s via YouTube — with song identification via Shazam, smart language detection, and a live resource monitor.
 
-```
-   _____             __  _ ____  __
-  / ___/____  ____  / /_(_) __ \/ /
-  \__ \/ __ \/ __ \/ __/ / / / / /
- ___/ / /_/ / /_/ / /_/ / /_/ / /___
-/____/ .___/\____/\__/_/_____/_____/
-    /_/
-```
+---
+
+## Screenshots
+
+### Welcome screen
+![Banner](screenshots/01_banner.svg)
+
+### \ Commands — autocomplete dropdown
+![Commands](screenshots/02_commands.svg)
+
+### `\song` — search a track by title
+![Song Search](screenshots/03_song_search.svg)
+
+### `\album` — browse and download an album
+![Album Browser](screenshots/04_album.svg)
+
+### Download in progress — parallel workers + live CPU/RAM stats
+![Download](screenshots/05_download.svg)
+
+### `\shazam` — identify a playing song via microphone
+![Shazam](screenshots/06_shazam.svg)
+
+### `\monitor` — live system resource panel
+![Monitor](screenshots/07_monitor.svg)
+
+### Completion summary
+![Done](screenshots/08_done.svg)
 
 ---
 
 ## Features
 
-- Downloads **playlists**, **albums**, and **single tracks** from Spotify
-- Searches YouTube automatically — no YouTube API key required
-- Writes complete **ID3 tags**: title, artist, album, year, track number, and cover art
-- **Skips already-downloaded tracks** (safe to re-run)
-- Configurable **MP3 bitrate**: 128 / 192 / 256 / 320 kbps
-- **Parallel downloads** via `--jobs N`
-- Colorful terminal UI with progress bar and per-track status
-
----
-
-## Requirements
-
-- Python 3.9+
-- [ffmpeg](https://ffmpeg.org/) (required by yt-dlp for audio conversion)
-- Spotify Developer credentials (free)
-
-### Install ffmpeg
-
-```bash
-# macOS
-brew install ffmpeg
-
-# Ubuntu / Debian
-sudo apt install ffmpeg
-
-# Windows (via Chocolatey)
-choco install ffmpeg
-```
+- **Spotify + YouTube** — paste any Spotify playlist, album, or track URL, or a YouTube video/playlist URL
+- **`\song`** — search Spotify by title, pick from results, download instantly
+- **`\album`** — search for an album, browse all tracks, download all or a selection (`1`, `2-5`, `1,3,5`)
+- **`\shazam`** — hold your device near a speaker, record 10 seconds, identify the song via Shazam's API, then download it
+- **`\organize`** — toggle Language-based subfolder sorting (`English/`, `Spanish/`, `Korean/`, …)
+- **`\monitor`** — live CPU %, RAM %, and CPU temperature display
+- **Parallel downloads** — auto-scales up to 4 workers; configurable with `--jobs`
+- **Language detection** — fetches lyrics via lyrics.ovh and runs `langdetect` to identify the song's language
+- **MP3 tagging** — writes ID3 tags (title, artist, album, year, track number, cover art) with `mutagen`
+- **Persistent session** — the app stays open after each operation; ESC goes back to the main prompt
+- **403 bypass** — uses YouTube's Android client to avoid bot detection without needing a PO token
 
 ---
 
 ## Installation
 
+### 1. Clone the repo
+
 ```bash
-git clone https://github.com/yourname/spotify-dl.git
+git clone https://github.com/vikrampruthvi5/spotify-dl.git
 cd spotify-dl
-pip install -r requirements.txt
 ```
 
----
+### 2. Add Spotify credentials
 
-## Setup
+Create a `.env` file in the project root:
 
-1. Go to [developer.spotify.com/dashboard](https://developer.spotify.com/dashboard) and create an app.
-2. Copy your **Client ID** and **Client Secret**.
-3. Create a `.env` file in the project directory:
+```
+SPOTIFY_CLIENT_ID=your_client_id
+SPOTIFY_CLIENT_SECRET=your_client_secret
+```
 
-```env
-SPOTIFY_CLIENT_ID=your_client_id_here
-SPOTIFY_CLIENT_SECRET=your_client_secret_here
+Get credentials at [developer.spotify.com/dashboard](https://developer.spotify.com/dashboard) — create an app and copy the Client ID and Secret.
+
+### 3. Run the installer
+
+```bash
+bash install.sh
+```
+
+This installs all Python dependencies, registers the `dj` command, and creates `~/Applications/DJ.app` for Spotlight.
+
+### 4. Install ffmpeg (required for audio conversion)
+
+```bash
+brew install ffmpeg
 ```
 
 ---
 
 ## Usage
 
-```
-python3 main.py <spotify_url> [options]
-```
-
-### Arguments
-
-| Argument | Description |
-|---|---|
-| `url` | Spotify playlist, album, or track URL |
-| `-o, --output DIR` | Output directory (default: `~/Downloads/SpotiDL`) |
-| `-q, --quality KBPS` | MP3 bitrate: `128`, `192`, `256`, `320` (default: `320`) |
-| `-j, --jobs N` | Parallel downloads (default: `1`) |
-
-### Examples
+### Launch the app
 
 ```bash
-# Download a playlist at 320 kbps
-python3 main.py https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M
+# Terminal
+dj
 
-# Download an album to a custom folder
-python3 main.py https://open.spotify.com/album/1DFixLWuPkv3KT3TnV35m3 -o ~/Music/Albums
-
-# Download a single track at 192 kbps
-python3 main.py https://open.spotify.com/track/4uLU6hMCjMI75M1A2tKUQC -q 192
-
-# Download a playlist with 4 parallel workers
-python3 main.py https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M -j 4
+# macOS Spotlight
+Cmd+Space  →  type DJ  →  Enter
 ```
 
----
+### Pass a URL directly
 
-## Output
-
-Files are saved as:
-
-```
-<output_dir>/
-  Artist Name - Track Title.mp3
-  Artist Name - Track Title.mp3
-  ...
+```bash
+dj https://open.spotify.com/playlist/...
+dj https://open.spotify.com/album/...
+dj https://open.spotify.com/track/...
+dj https://www.youtube.com/watch?v=...
+dj https://www.youtube.com/playlist?list=...
 ```
 
-Each file contains embedded ID3 tags readable by any media player (iTunes, VLC, foobar2000, etc.).
+### Interactive mode
 
----
+Type `\` at the prompt to see the command dropdown, then select:
 
-## Project Structure
-
-```
-spotify-dl/
-├── main.py            # CLI entry point, UI rendering, download orchestration
-├── spotify_client.py  # Spotify API: fetch playlist / album / track metadata
-├── downloader.py      # YouTube search + audio download via yt-dlp
-├── tagger.py          # Write ID3 metadata + cover art via mutagen
-├── config.py          # Load .env credentials and defaults
-├── requirements.txt
-├── .env.example
-└── .gitignore
-```
-
----
-
-## How It Works
-
-1. **Fetch metadata** — SpotiDL calls the Spotify API to get track names, artists, albums, release years, and cover art URLs.
-2. **Search YouTube** — For each track, yt-dlp searches `ytsearch1:<artist> - <title>` and picks the top result.
-3. **Download & convert** — yt-dlp downloads the best available audio and ffmpeg converts it to MP3 at the requested bitrate.
-4. **Tag** — mutagen writes ID3v2 tags and embeds the album cover from Spotify's CDN.
-
----
-
-## Notes
-
-- Track matching is best-effort via YouTube search. Accuracy depends on how well-indexed the track is on YouTube.
-- SpotiDL does not download DRM-protected content directly from Spotify. It finds equivalent audio on YouTube.
-- Re-running on the same output directory skips files that already exist.
-
----
-
-## Dependencies
-
-| Package | Purpose |
+| Command | What it does |
 |---|---|
-| `spotipy` | Spotify Web API client |
-| `yt-dlp` | YouTube download + audio extraction |
-| `mutagen` | ID3 tag writing |
-| `rich` | Terminal UI (colors, progress bar, panels) |
-| `pyfiglet` | ASCII banner |
-| `requests` | Fetch album cover art |
-| `python-dotenv` | Load `.env` credentials |
+| `\shazam` | Records 10 s from the mic, identifies the song via Shazam, asks to download |
+| `\song` | Search Spotify by track title, pick from up to 6 results |
+| `\album` | Search for an album, browse all tracks, select which to download |
+| `\organize` | Toggle Language/ subfolder sorting on/off |
+| `\monitor` | Open live CPU / RAM / temperature panel |
+
+**Navigation:** ESC at any prompt returns to the main menu. ESC at the main prompt exits. Ctrl+C exits from anywhere.
+
+---
+
+## CLI flags
+
+| Flag | Default | Description |
+|---|---|---|
+| `-o / --output` | `~/Downloads/SpotiDL` | Output directory |
+| `-q / --quality` | `320` | MP3 bitrate (`128`, `192`, `256`, `320`) |
+| `-j / --jobs` | auto (≤ 4) | Parallel download workers |
+| `--browser` | — | Use browser cookies to bypass 403 errors (`chrome`, `firefox`, `safari`, `brave`, …) |
+| `--organize` | off | Sort into `Language/Artist - Title.mp3` subfolders |
+| `--shazam` | — | Listen via mic and download identified song |
+| `--shazam-file PATH` | — | Identify from an existing audio file |
+| `--listen-duration` | `10` | Seconds to record for `--shazam` |
+
+---
+
+## Folder structure with `--organize` / `\organize`
+
+```
+~/Downloads/SpotiDL/
+├── English/
+│   ├── Ed Sheeran - Shape of You.mp3
+│   └── Harry Styles - As It Was.mp3
+├── Spanish/
+│   ├── Bad Bunny - Tití Me Preguntó.mp3
+│   └── J Balvin - Con Altura.mp3
+└── Korean/
+    └── BTS - Spring Day.mp3
+```
+
+---
+
+## Requirements
+
+- Python 3.9+
+- ffmpeg (`brew install ffmpeg`)
+- Spotify Developer credentials (free) — needed for `\song`, `\album`, and Spotify URL downloads
+- Internet connection
+
+All Python packages are installed automatically by `install.sh`:
+
+```
+spotipy, yt-dlp, mutagen, rich, pyfiglet, requests,
+python-dotenv, prompt_toolkit, shazamio, sounddevice,
+scipy, langdetect, psutil
+```
+
+---
+
+## Regenerate screenshots
+
+```bash
+python3 _gen_screenshots.py
+```
