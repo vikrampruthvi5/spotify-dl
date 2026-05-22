@@ -25,13 +25,12 @@ def sanitize(name: str) -> str:
 def download_track(track: dict, output_dir: str, quality: str = "320", cookies_browser: str = None):
     Path(output_dir).mkdir(parents=True, exist_ok=True)
 
-    safe_name = sanitize(f"{track['artist']} - {track['title']}")
+    safe_name  = sanitize(f"{track['artist']} - {track['title']}")
     final_path = os.path.join(output_dir, f"{safe_name}.mp3")
 
     if os.path.exists(final_path):
         return SKIP
 
-    query = f"{track['artist']} - {track['title']}"
     template = os.path.join(output_dir, f"{safe_name}.%(ext)s")
 
     ydl_opts = {
@@ -59,9 +58,12 @@ def download_track(track: dict, output_dir: str, quality: str = "320", cookies_b
     if cookies_browser:
         ydl_opts["cookiesfrombrowser"] = (cookies_browser,)
 
+    # use direct URL if provided (YouTube source), otherwise search
+    source = track.get("youtube_url") or f"ytsearch1:{track['artist']} - {track['title']}"
+
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([f"ytsearch1:{query}"])
+            ydl.download([source])
     except Exception:
         pass  # post-processing warnings can raise; still check if the mp3 was written
 

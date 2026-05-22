@@ -23,7 +23,8 @@ from prompt_toolkit.styles import Style as PtStyle
 from prompt_toolkit.formatted_text import HTML
 
 from config import DEFAULT_OUTPUT_DIR, DEFAULT_QUALITY, SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET
-from spotify_client import get_info
+from spotify_client import get_info as get_spotify_info
+from youtube import get_info as get_yt_info, is_youtube_url
 from downloader import download_track, SKIP
 from tagger import tag_file
 
@@ -80,7 +81,7 @@ def get_url_interactive() -> str:
     )
     try:
         result = session.prompt(
-            HTML("<ansicyan><b>  ♪  Spotify URL  ›  </b></ansicyan>")
+            HTML("<ansicyan><b>  ♪  Spotify or YouTube URL  ›  </b></ansicyan>")
         )
     except (KeyboardInterrupt, EOFError):
         result = None
@@ -169,17 +170,24 @@ def step_print(n: int, total: int, msg: str):
 
 
 def run(url: str, output_dir: str, quality: str, jobs, browser: str = None):
-    check_credentials()
-
-    step_print(1, 3, f"Connecting to Spotify  [dim]{url}[/dim]")
-    try:
-        info = get_info(url)
-    except ValueError as e:
-        console.print(f"\n  [bold bright_red]!!  Error:[/bold bright_red] [red]{e}[/red]\n")
-        sys.exit(1)
-    except Exception as e:
-        console.print(f"\n  [bold bright_red]!!  Failed:[/bold bright_red] [red]{e}[/red]\n")
-        sys.exit(1)
+    if is_youtube_url(url):
+        step_print(1, 3, f"Fetching from YouTube  [dim]{url}[/dim]")
+        try:
+            info = get_yt_info(url)
+        except Exception as e:
+            console.print(f"\n  [bold bright_red]!!  Failed:[/bold bright_red] [red]{e}[/red]\n")
+            sys.exit(1)
+    else:
+        check_credentials()
+        step_print(1, 3, f"Connecting to Spotify  [dim]{url}[/dim]")
+        try:
+            info = get_spotify_info(url)
+        except ValueError as e:
+            console.print(f"\n  [bold bright_red]!!  Error:[/bold bright_red] [red]{e}[/red]\n")
+            sys.exit(1)
+        except Exception as e:
+            console.print(f"\n  [bold bright_red]!!  Failed:[/bold bright_red] [red]{e}[/red]\n")
+            sys.exit(1)
 
     console.print()
     print_source_info(info)
