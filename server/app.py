@@ -25,7 +25,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from core.config import DEFAULT_OUTPUT_DIR, DEFAULT_QUALITY
-from core.spotify_client import get_info as get_spotify_info
+from core.spotify_client import get_info as get_spotify_info, get_tracks_by_ids
+from core.trending import get_trending, list_regions
 from core.youtube import get_info as get_yt_info, is_youtube_url
 from core.downloader import download_track, SKIP
 from core.tagger import tag_file
@@ -229,71 +230,75 @@ async def get_info(url: str = Query(..., description="Spotify or YouTube URL")):
 
 # ── Download ──────────────────────────────────────────────────────────────────
 
+def _download_tracks(tracks: list, output_dir: str, quality: str,
+                     organize: bool, browser, jobs: int, emit, name: str = "Selection"):
+    """Shared loop for downloading a list of track dicts with SSE event emission."""
+    emit({"type": "start", "name": name, "total": len(tracks)})
+
+    downloaded = skipped = failed = 0
+    failed_tracks = []
+
+    def _process(track: dict):
+        nonlocal downloaded, skipped, failed
+        emit({"type": "track_start",
+              "artist": track["artist"], "title": track["title"]})
+
+        track_dir = output_dir
+        if organize:
+            lang      = detect_language(track["artist"], track["title"])
+            track_dir = os.path.join(output_dir, lang)
+
+        path = download_track(track, track_dir, quality, cookies_browser=browser)
+        if path == SKIP:
+            skipped += 1
+            emit({"type": "track_done", "status": "skip",
+                  "artist": track["artist"], "title": track["title"]})
+        elif path is None:
+            failed += 1
+            failed_tracks.append(track)
+            emit({"type": "track_done", "status": "fail",
+                  "artist": track["artist"], "title": track["title"]})
+        else:
+            tag_file(path, track)
+            analysis = analyze_and_tag(path)
+            downloaded += 1
+            emit({"type": "track_done", "status": "ok",
+                  "artist": track["artist"], "title": track["title"], "path": path,
+                  "bpm": analysis.get("bpm"), "key": analysis.get("key"),
+                  "camelot": analysis.get("camelot")})
+
+    n = min(len(tracks), jobs) if tracks else 0
+    if n <= 1:
+        for t in tracks:
+            _process(t)
+    else:
+        with ThreadPoolExecutor(max_workers=n) as pool:
+            for fut in futures_done({pool.submit(_process, t): t for t in tracks}):
+                try:
+                    fut.result()
+                except Exception:
+                    pass
+
+    emit({"type": "summary", "downloaded": downloaded,
+          "skipped": skipped, "failed": failed,
+          "failed_tracks": [{"artist": t["artist"], "title": t["title"]}
+                            for t in failed_tracks]})
+
+
 @app.post("/api/download")
 async def start_download(req: DownloadRequest):
-    """Kick off a download job. Poll GET /api/jobs/{job_id}/events for progress."""
+    """Download an entire Spotify or YouTube playlist/album/track."""
     loop = asyncio.get_running_loop()
     job_id, queue = _new_job(loop)
     emit = _emitter(queue, loop)
 
     def _run():
         try:
-            fn = get_yt_info if is_youtube_url(req.url) else get_spotify_info
-            info   = fn(req.url)
-            tracks = info["tracks"]
-            emit({"type": "start", "name": info["name"], "total": len(tracks)})
-
-            downloaded = skipped = failed = 0
-            failed_tracks = []
-
-            def _process(track: dict):
-                nonlocal downloaded, skipped, failed
-                emit({"type": "track_start",
-                      "artist": track["artist"], "title": track["title"]})
-
-                track_dir = req.output_dir
-                if req.organize:
-                    lang      = detect_language(track["artist"], track["title"])
-                    track_dir = os.path.join(req.output_dir, lang)
-
-                path = download_track(track, track_dir, req.quality,
-                                      cookies_browser=req.browser)
-                if path == SKIP:
-                    skipped += 1
-                    emit({"type": "track_done", "status": "skip",
-                          "artist": track["artist"], "title": track["title"]})
-                elif path is None:
-                    failed += 1
-                    failed_tracks.append(track)
-                    emit({"type": "track_done", "status": "fail",
-                          "artist": track["artist"], "title": track["title"]})
-                else:
-                    tag_file(path, track)
-                    analysis = analyze_and_tag(path)
-                    downloaded += 1
-                    emit({"type": "track_done", "status": "ok",
-                          "artist": track["artist"], "title": track["title"],
-                          "path": path,
-                          "bpm": analysis.get("bpm"),
-                          "key": analysis.get("key"),
-                          "camelot": analysis.get("camelot")})
-
-            n = min(len(tracks), req.jobs)
-            if n <= 1:
-                for t in tracks:
-                    _process(t)
-            else:
-                with ThreadPoolExecutor(max_workers=n) as pool:
-                    for fut in futures_done({pool.submit(_process, t): t for t in tracks}):
-                        try:
-                            fut.result()
-                        except Exception:
-                            pass
-
-            emit({"type": "summary", "downloaded": downloaded,
-                  "skipped": skipped, "failed": failed,
-                  "failed_tracks": [{"artist": t["artist"], "title": t["title"]}
-                                    for t in failed_tracks]})
+            fn   = get_yt_info if is_youtube_url(req.url) else get_spotify_info
+            info = fn(req.url)
+            _download_tracks(info["tracks"], req.output_dir, req.quality,
+                             req.organize, req.browser, req.jobs, emit,
+                             name=info["name"])
         except Exception as e:
             emit({"type": "error", "message": str(e)})
         finally:
@@ -301,6 +306,60 @@ async def start_download(req: DownloadRequest):
 
     loop.run_in_executor(_executor, _run)
     return {"job_id": job_id}
+
+
+class DownloadTracksRequest(BaseModel):
+    track_ids: list[str]
+    output_dir: str = DEFAULT_OUTPUT_DIR
+    quality:    str = DEFAULT_QUALITY
+    organize:   bool = False
+    browser:    Optional[str] = None
+    jobs:       int = 4
+    name:       Optional[str] = None
+
+
+@app.post("/api/download-tracks")
+async def start_download_tracks(req: DownloadTracksRequest):
+    """Download a custom selection of Spotify tracks by ID list."""
+    loop = asyncio.get_running_loop()
+    job_id, queue = _new_job(loop)
+    emit = _emitter(queue, loop)
+
+    def _run():
+        try:
+            tracks = get_tracks_by_ids(req.track_ids)
+            if not tracks:
+                emit({"type": "error", "message": "No valid tracks resolved from IDs"})
+                return
+            _download_tracks(tracks, req.output_dir, req.quality,
+                             req.organize, req.browser, req.jobs, emit,
+                             name=req.name or f"Selection ({len(tracks)})")
+        except Exception as e:
+            emit({"type": "error", "message": str(e)})
+        finally:
+            emit(None)
+
+    loop.run_in_executor(_executor, _run)
+    return {"job_id": job_id}
+
+
+# ── Trending ──────────────────────────────────────────────────────────────────
+
+@app.get("/api/trending/regions")
+async def trending_regions():
+    return list_regions()
+
+
+@app.get("/api/trending")
+async def trending(region: str = Query("bollywood")):
+    """Fetch the current trending Spotify playlist for a region."""
+    loop = asyncio.get_running_loop()
+    try:
+        return await loop.run_in_executor(_executor, get_trending, region, 50)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/api/jobs/{job_id}/events")

@@ -1,7 +1,7 @@
 import re
 import spotipy
 from spotipy.oauth2 import SpotifyClientCredentials
-from config import SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET
+from .config import SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET
 
 
 def _make_client() -> spotipy.Spotify:
@@ -147,6 +147,30 @@ def get_track_info(url: str) -> dict:
         "cover_url": cover_url,
         "tracks": [t],
     }
+
+
+def get_tracks_by_ids(track_ids: list) -> list:
+    """Fetch full track dicts for an arbitrary list of Spotify track IDs.
+
+    Batches the request in groups of 50 (Spotify API limit), filters out
+    unavailable / local tracks, and enriches with audio features so the
+    returned tracks are ready to feed into download_track + tag_file.
+    """
+    if not track_ids:
+        return []
+    sp = _make_client()
+    tracks = []
+    for i in range(0, len(track_ids), 50):
+        batch = sp.tracks(track_ids[i : i + 50]) or {}
+        for t in (batch.get("tracks") or []):
+            if not t or t.get("is_local"):
+                continue
+            images    = t["album"].get("images", [])
+            cover_url = images[0]["url"] if images else None
+            year      = (t["album"].get("release_date") or "")[:4]
+            tracks.append(_track_dict(t, t["album"]["name"], cover_url, year))
+    _apply_audio_features(tracks, _fetch_audio_features(sp, tracks))
+    return tracks
 
 
 def get_info(url: str) -> dict:

@@ -58,6 +58,29 @@ export interface DupeResult {
   by_tags_count: number;
 }
 
+export interface TrendingTrack {
+  id: string;
+  title: string;
+  artist: string;
+  album: string;
+  duration_ms: number;
+  year?: string;
+  cover_url?: string;
+  popularity: number;
+  spotify_url?: string;
+}
+
+export interface TrendingResult {
+  region: string;
+  label: string;
+  language: string;
+  playlist_name: string;
+  playlist_id: string;
+  playlist_url: string;
+  cover_url: string | null;
+  tracks: TrendingTrack[];
+}
+
 export interface WatchedPlaylist {
   url: string;
   name: string;
@@ -138,6 +161,25 @@ export const api = {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     }).then((r) => _json<{ job_id: string }>(r)),
+
+  downloadTracks: (body: {
+    track_ids: string[]; output_dir: string; quality: string;
+    organize?: boolean; browser?: string | null; jobs?: number; name?: string;
+  }) =>
+    fetch(`${BASE}/download-tracks`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }).then((r) => _json<{ job_id: string }>(r)),
+
+  getTrending: (region: string) =>
+    fetch(`${BASE}/trending?region=${encodeURIComponent(region)}`).then((r) =>
+      _json<TrendingResult>(r)
+    ),
+
+  getTrendingRegions: () =>
+    fetch(`${BASE}/trending/regions`).then((r) =>
+      _json<{ id: string; label: string; language: string; query: string }[]>(r)
+    ),
 
   getLibrary: (dir: string) =>
     fetch(`${BASE}/library?dir=${encodeURIComponent(dir)}`).then((r) =>

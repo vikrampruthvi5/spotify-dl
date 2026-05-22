@@ -6,11 +6,13 @@ import DownloadPage  from "./pages/DownloadPage";
 import LibraryPage   from "./pages/LibraryPage";
 import DJToolsPage   from "./pages/DJToolsPage";
 import WatcherPage   from "./pages/WatcherPage";
+import TrendingPage  from "./pages/TrendingPage";
 
-type Page = "download" | "library" | "dj" | "watcher";
+type Page = "download" | "trending" | "library" | "dj" | "watcher";
 
 const NAV: { id: Page; label: string; icon: string }[] = [
   { id: "download", label: "Download",  icon: "⬇" },
+  { id: "trending", label: "Trending",  icon: "★" },
   { id: "library",  label: "Library",   icon: "♪" },
   { id: "dj",       label: "DJ Tools",  icon: "♫" },
   { id: "watcher",  label: "Watcher",   icon: "⚡" },
@@ -110,6 +112,7 @@ export default function App() {
         {config && (
           <>
             {page === "download" && <DownloadPage outputDir={config.output_dir} quality={config.quality} />}
+            {page === "trending" && <TrendingPage outputDir={config.output_dir} quality={config.quality} />}
             {page === "library"  && <LibraryPage  outputDir={config.output_dir} />}
             {page === "dj"       && <DJToolsPage  outputDir={config.output_dir} desktop={config.desktop} />}
             {page === "watcher"  && <WatcherPage  outputDir={config.output_dir} home={config.home} />}
