@@ -68,14 +68,11 @@ _PT_STYLE = PtStyle.from_dict({
 })
 
 _SLASH_COMMANDS = [
-    ("\\shazam", "Listen via mic & identify song"),
-    ("\\song",   "Search track by title"),
-    ("\\album",  "Browse album & download tracks"),
+    ("\\shazam",    "Listen via mic & identify song"),
+    ("\\song",      "Search track by title"),
+    ("\\album",     "Browse album & download tracks"),
+    ("\\organize",  "Toggle Language/ subfolder sorting"),
 ]
-
-_URL_TOOLBAR = HTML(
-    "  <b>\\</b>  commands      <b>ENTER</b>  download      <b>ESC</b>  exit  "
-)
 
 
 class _SlashCompleter(Completer):
@@ -93,17 +90,20 @@ class _SlashCompleter(Completer):
                 )
 
 
-def get_url_interactive() -> str:
+def get_url_interactive(organize: bool = False) -> str:
     kb = KeyBindings()
 
     @kb.add("escape")
     def _quit(event):
         event.app.exit(result=None)
 
+    org_badge = "  <b>[organize: ON]</b>" if organize else ""
+    toolbar = HTML(f"  <b>\\</b>  commands      <b>ENTER</b>  download{org_badge}      <b>ESC</b>  exit  ")
+
     session = PromptSession(
         style=_PT_STYLE,
         key_bindings=kb,
-        bottom_toolbar=_URL_TOOLBAR,
+        bottom_toolbar=toolbar,
         completer=_SlashCompleter(),
         complete_while_typing=True,
     )
@@ -856,8 +856,9 @@ def main():
             return
 
         # Interactive loop — keeps running until ESC at the main prompt
+        organize = args.organize
         while True:
-            url = get_url_interactive()
+            url = get_url_interactive(organize=organize)
             if not url:
                 console.print("\n  [dim]Bye![/dim]\n")
                 break
@@ -866,16 +867,21 @@ def main():
                 parts = url.split(None, 1)
                 cmd   = parts[0].lower()
                 query = parts[1].strip() if len(parts) > 1 else ""
-                if cmd == "\\shazam":
-                    run_shazam(args.output, args.quality, browser=args.browser, duration=args.listen_duration, organize=args.organize)
+                if cmd == "\\organize":
+                    organize = not organize
+                    state = "[bold bright_green]ON[/bold bright_green]" if organize else "[bold yellow]OFF[/bold yellow]"
+                    console.print(f"\n  Organize mode: {state}  [dim](songs sorted into Language/ subfolders)[/dim]\n")
+                    continue
+                elif cmd == "\\shazam":
+                    run_shazam(args.output, args.quality, browser=args.browser, duration=args.listen_duration, organize=organize)
                 elif cmd == "\\song":
-                    run_song_search(query, args.output, args.quality, browser=args.browser, organize=args.organize)
+                    run_song_search(query, args.output, args.quality, browser=args.browser, organize=organize)
                 elif cmd == "\\album":
-                    run_album_search(query, args.output, args.quality, browser=args.browser, organize=args.organize)
+                    run_album_search(query, args.output, args.quality, browser=args.browser, organize=organize)
                 else:
                     console.print(f"\n  [bold red]Unknown command:[/bold red] {cmd}\n")
             else:
-                run(url, args.output, args.quality, args.jobs, browser=args.browser, organize=args.organize)
+                run(url, args.output, args.quality, args.jobs, browser=args.browser, organize=organize)
 
             console.print(Rule(style="dim bright_black"))
             console.print()
