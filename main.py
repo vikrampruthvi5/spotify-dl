@@ -285,7 +285,7 @@ def run(url: str, output_dir: str, quality: str, jobs, browser: str = None):
     ))
     console.print(f"  [dim]Saved to[/dim] [bright_cyan]{output_dir}[/bright_cyan]")
 
-    if failed > 0 and not browser:
+    if failed > 0 and not browser and not is_youtube_url(url):
         console.print()
         console.print(Panel(
             "YouTube is blocking downloads without browser cookies.\n"
