@@ -27,6 +27,7 @@ from spotify_client import get_info as get_spotify_info
 from youtube import get_info as get_yt_info, is_youtube_url
 from downloader import download_track, SKIP
 from tagger import tag_file
+from recognizer import record_and_identify, identify_file
 
 console = Console()
 
@@ -167,6 +168,129 @@ def step_print(n: int, total: int, msg: str):
         f"[bold bright_black]][/bold bright_black]  "
         f"[bright_white]{msg}[/bright_white]"
     )
+
+
+def run_shazam(output_dir: str, quality: str, browser: str = None, duration: int = 10, file: str = None):
+    if file:
+        step_print(1, 3, f"Identifying from file  [dim]{file}[/dim]")
+        try:
+            track = identify_file(file)
+        except Exception as e:
+            console.print(f"\n  [bold bright_red]!!  Failed:[/bold bright_red] [red]{e}[/red]\n")
+            sys.exit(1)
+    else:
+        console.print(Panel(
+            f"  Hold your device near the audio source.\n"
+            f"  Recording for [bold bright_yellow]{duration}[/bold bright_yellow] seconds — stay quiet until done.\n\n"
+            f"  [dim]Press [bold]Ctrl+C[/bold] to cancel.[/dim]",
+            title="[bold bright_magenta]  ♫  Shazam Listening  ♫  [/bold bright_magenta]",
+            border_style="bright_magenta",
+            box=box.DOUBLE_EDGE,
+        ))
+        console.print()
+
+        with Progress(
+            SpinnerColumn(spinner_name="dots2", style="bright_magenta"),
+            TextColumn("[bold bright_white]{task.description}"),
+            BarColumn(bar_width=28, style="bright_magenta", complete_style="bright_green"),
+            TaskProgressColumn(style="bold bright_yellow"),
+            TimeElapsedColumn(),
+            console=console,
+            transient=True,
+        ) as progress:
+            rec_task = progress.add_task("[bright_magenta]Recording...[/bright_magenta]", total=None)
+            try:
+                track = record_and_identify(duration)
+            except Exception as e:
+                console.print(f"\n  [bold bright_red]!!  Recognition failed:[/bold bright_red] [red]{e}[/red]\n")
+                sys.exit(1)
+            progress.update(rec_task, description="[bright_green]Identified![/bright_green]")
+
+        step_print(1, 3, "Audio recorded and sent to Shazam")
+
+    console.print()
+
+    if not track:
+        console.print(Panel(
+            "  Shazam could not identify the song.\n"
+            "  [dim]Try recording in a quieter environment or move closer to the audio source.[/dim]",
+            title="[bold yellow]  !! No Match Found  [/bold yellow]",
+            border_style="yellow",
+            box=box.DOUBLE_EDGE,
+        ))
+        console.print()
+        sys.exit(1)
+
+    color = "bright_magenta"
+    t = Table(show_header=False, box=box.SIMPLE, padding=(0, 1))
+    t.add_column(style=f"bold {color}", min_width=10)
+    t.add_column(style="bright_white")
+    t.add_row("♪  Title",  f"[bold]{track['title']}[/bold]")
+    t.add_row("*  Artist", track["artist"])
+    if track.get("album"):
+        t.add_row("◉  Album", track["album"])
+    if track.get("spotify_url"):
+        t.add_row("⊕  Spotify", f"[dim]{track['spotify_url']}[/dim]")
+
+    console.print(Panel(
+        t,
+        title=f"[bold {color}]  ♫  Shazam Match  ♫  [/bold {color}]",
+        border_style=color,
+        box=box.DOUBLE_EDGE,
+        padding=(1, 2),
+    ))
+    console.print()
+
+    # Ask user to confirm download
+    kb = KeyBindings()
+
+    @kb.add("escape")
+    def _quit(event):
+        event.app.exit(result="n")
+
+    session = PromptSession(
+        style=_PT_STYLE,
+        key_bindings=kb,
+        bottom_toolbar=HTML("  <b>ENTER</b>  confirm download      <b>ESC</b>  cancel  "),
+    )
+    try:
+        confirm = session.prompt(
+            HTML("<ansicyan><b>  ♪  Download this track? [Y/n]  ›  </b></ansicyan>"),
+            default="y",
+        )
+    except (KeyboardInterrupt, EOFError):
+        confirm = "n"
+
+    if confirm and confirm.strip().lower() in ("n", "no"):
+        console.print("\n  [dim]Cancelled.[/dim]\n")
+        sys.exit(0)
+
+    console.print()
+    step_print(2, 3, f"Matched  [bold bright_magenta]{track['artist']}[/bold bright_magenta]  –  [bold bright_white]{track['title']}[/bold bright_white]")
+    console.print()
+
+    step_print(3, 3, f"Downloading to [bright_cyan]{output_dir}[/bright_cyan]")
+    console.print()
+
+    label_rich = (
+        f"[bright_cyan]{track['artist'][:30]}[/bright_cyan]"
+        f"[dim] - [/dim]"
+        f"[bright_white]{track['title'][:40]}[/bright_white]"
+    )
+
+    path = download_track(track, output_dir, quality, cookies_browser=browser)
+
+    if path == SKIP:
+        console.print(f"  [bold yellow]o[/bold yellow]  {label_rich}  [dim yellow](already exists, skipped)[/dim yellow]")
+    elif path is None:
+        console.print(f"  [bold bright_red]x[/bold bright_red]  {label_rich}  [dim red](download failed)[/dim red]")
+    else:
+        tag_file(path, track)
+        console.print(f"  [bold bright_green]v[/bold bright_green]  {label_rich}  [dim green](saved)[/dim green]")
+
+    console.print()
+    console.print(f"  [dim]Saved to[/dim] [bright_cyan]{output_dir}[/bright_cyan]")
+    console.print()
 
 
 def run(url: str, output_dir: str, quality: str, jobs, browser: str = None):
@@ -332,17 +456,44 @@ def main():
         choices=["chrome", "firefox", "safari", "brave", "edge", "opera", "chromium"],
         help="Use cookies from this browser to bypass YouTube 403 errors",
     )
+    parser.add_argument(
+        "--shazam",
+        action="store_true",
+        help="Listen via microphone, identify the song with Shazam, then download it",
+    )
+    parser.add_argument(
+        "--shazam-file",
+        default=None,
+        metavar="PATH",
+        help="Identify a song from an audio file using Shazam, then download it",
+    )
+    parser.add_argument(
+        "--listen-duration",
+        type=int,
+        default=10,
+        metavar="SECS",
+        help="How many seconds to record when using --shazam (default: 10)",
+    )
 
     args = parser.parse_args()
 
-    url = args.url
-    if not url:
-        url = get_url_interactive()
-        if not url:
-            console.print("\n  [dim]Bye![/dim]\n")
-            sys.exit(0)
-
     try:
+        if args.shazam or args.shazam_file:
+            run_shazam(
+                args.output, args.quality,
+                browser=args.browser,
+                duration=args.listen_duration,
+                file=args.shazam_file,
+            )
+            return
+
+        url = args.url
+        if not url:
+            url = get_url_interactive()
+            if not url:
+                console.print("\n  [dim]Bye![/dim]\n")
+                sys.exit(0)
+
         run(url, args.output, args.quality, args.jobs, browser=args.browser)
     except KeyboardInterrupt:
         console.print("\n\n  [dim]Interrupted.[/dim]\n")
