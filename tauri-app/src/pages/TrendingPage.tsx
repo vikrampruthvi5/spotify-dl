@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { api, streamJobEvents, type JobEvent,
-         type TrendingResult, type TrendingTrack } from "../api/client";
+         type TrendingResult, type TrendingTrack,
+         type WatchedPlaylist } from "../api/client";
 import PlaylistPickerModal from "../components/PlaylistPickerModal";
 
 interface Props { outputDir: string; quality: string; }
@@ -43,12 +44,29 @@ export default function TrendingPage({ outputDir, quality }: Props) {
     catch { return new Set(); }
   });
   const [showHidden, setShowHidden] = useState(false);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  const esRef    = useRef<EventSource | null>(null);
+  const [watched, setWatched]       = useState<WatchedPlaylist[]>([]);
+  const [showFolderMenu, setShowFolderMenu] = useState(false);
+  const audioRef      = useRef<HTMLAudioElement | null>(null);
+  const folderMenuRef = useRef<HTMLDivElement | null>(null);
+  const esRef         = useRef<EventSource | null>(null);
 
   useEffect(() => {
     api.authStatus().then(r => setAuthed(r.authenticated)).catch(() => {});
+    api.listPlaylists()
+      .then(r => setWatched((r as { playlists: WatchedPlaylist[] }).playlists ?? []))
+      .catch(() => {});
   }, []);
+
+  // Close the folder dropdown when clicking outside
+  useEffect(() => {
+    if (!showFolderMenu) return;
+    const onDown = (e: MouseEvent) => {
+      if (folderMenuRef.current && !folderMenuRef.current.contains(e.target as Node))
+        setShowFolderMenu(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [showFolderMenu]);
 
   // Persist hidden track IDs across sessions
   useEffect(() => {
@@ -136,9 +154,18 @@ export default function TrendingPage({ outputDir, quality }: Props) {
   const selectAll = () => data && setSelected(new Set(data.tracks.map(t => t.id)));
   const clearAll  = () => setSelected(new Set());
 
-  // Build a lookup for finding tracks by artist+title from SSE events
-  const trackByName: Record<string, string> = {};
-  data?.tracks.forEach(t => { trackByName[`${t.artist}|${t.title}`] = t.id; });
+  // Shared SSE event handler — uses the track id directly (more robust than
+  // matching by artist|title, which can mismatch on locale / encoding).
+  const wireJobEvents = (job_id: string) => {
+    esRef.current = streamJobEvents(job_id, (ev: JobEvent) => {
+      if (ev.type === "track_done") {
+        const id = (ev as { id?: string }).id;
+        if (id) setTrackStatus(prev => ({ ...prev, [id]: ev.status }));
+      } else if (ev.type === "summary") {
+        setSummary({ downloaded: ev.downloaded, skipped: ev.skipped, failed: ev.failed });
+      }
+    }, () => setDownloading(false));
+  };
 
   const downloadSelected = async () => {
     if (selected.size === 0 || !data) return;
@@ -153,14 +180,29 @@ export default function TrendingPage({ outputDir, quality }: Props) {
         jobs:       4,
         name:       `${data.label} trending`,
       });
-      esRef.current = streamJobEvents(job_id, (ev: JobEvent) => {
-        if (ev.type === "track_done") {
-          const id = trackByName[`${ev.artist}|${ev.title}`];
-          if (id) setTrackStatus(prev => ({ ...prev, [id]: ev.status }));
-        } else if (ev.type === "summary") {
-          setSummary({ downloaded: ev.downloaded, skipped: ev.skipped, failed: ev.failed });
-        }
-      }, () => setDownloading(false));
+      wireJobEvents(job_id);
+    } catch (e: unknown) {
+      setError(String((e as Error).message ?? e));
+      setDownloading(false);
+    }
+  };
+
+  const downloadToWatched = async (playlist: WatchedPlaylist) => {
+    if (selected.size === 0) return;
+    setShowFolderMenu(false);
+    setDownloading(true); setTrackStatus({}); setSummary(null);
+    localStorage.setItem("spotidl.browser", browser);
+    try {
+      const { job_id } = await api.downloadToWatched({
+        playlist_url: playlist.url,
+        track_ids:    Array.from(selected),
+        quality,
+        browser:      browser === "none" ? null : browser,
+        jobs:         4,
+      });
+      setToast(`Downloading to ${playlist.name}…`);
+      setTimeout(() => setToast(""), 2500);
+      wireJobEvents(job_id);
     } catch (e: unknown) {
       setError(String((e as Error).message ?? e));
       setDownloading(false);
@@ -368,6 +410,44 @@ export default function TrendingPage({ outputDir, quality }: Props) {
               + Spotify Playlist
             </button>
           )}
+
+          {/* Add to watched folder dropdown */}
+          {watched.length > 0 && (
+            <div ref={folderMenuRef} style={{ position:"relative" }}>
+              <button onClick={() => setShowFolderMenu(v => !v)} disabled={downloading}
+                style={{ background:"var(--surface-2)", color:"var(--text)",
+                         padding:"8px 14px", border:"1px solid var(--border)" }}>
+                → Add to folder ▾
+              </button>
+              {showFolderMenu && (
+                <div style={{
+                  position:"absolute", bottom:"calc(100% + 6px)", right:0,
+                  background:"var(--surface)", border:"1px solid var(--border)",
+                  borderRadius:10, padding:4, minWidth:240,
+                  boxShadow:"0 8px 24px rgba(0,0,0,0.5)", zIndex:100,
+                }}>
+                  {watched.map(p => (
+                    <button key={p.url} onClick={() => downloadToWatched(p)}
+                      style={{
+                        width:"100%", padding:"8px 12px", background:"transparent",
+                        color:"var(--text)", borderRadius:6, textAlign:"left",
+                        display:"flex", flexDirection:"column", gap:2, fontSize:13,
+                      }}
+                      onMouseEnter={e => e.currentTarget.style.background = "var(--surface-2)"}
+                      onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                      <span style={{ fontWeight:500 }}>{p.name}</span>
+                      <span style={{ fontSize:10, color:"var(--text-dim)",
+                                     overflow:"hidden", textOverflow:"ellipsis",
+                                     whiteSpace:"nowrap" }}>
+                        {p.folder}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
           <button onClick={downloadSelected} disabled={downloading}
             style={{ background:"var(--accent)", color:"#000",
                      padding:"9px 22px", fontWeight:600 }}>

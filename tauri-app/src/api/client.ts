@@ -192,6 +192,15 @@ export const api = {
       body: JSON.stringify(body),
     }).then((r) => _json<{ job_id: string }>(r)),
 
+  downloadToWatched: (body: {
+    playlist_url: string; track_ids: string[]; quality: string;
+    browser?: string | null; jobs?: number;
+  }) =>
+    fetch(`${BASE}/download-to-watched`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }).then((r) => _json<{ job_id: string; playlist: string; folder: string }>(r)),
+
   getTrending: (region: string) =>
     fetch(`${BASE}/trending?region=${encodeURIComponent(region)}`).then((r) =>
       _json<TrendingResult>(r)

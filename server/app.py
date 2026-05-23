@@ -237,15 +237,22 @@ async def get_info(url: str = Query(..., description="Spotify or YouTube URL")):
 
 def _download_tracks(tracks: list, output_dir: str, quality: str,
                      organize: bool, browser, jobs: int, emit, name: str = "Selection"):
-    """Shared loop for downloading a list of track dicts with SSE event emission."""
+    """Shared loop for downloading a list of track dicts with SSE event emission.
+
+    Returns a list of Spotify track IDs that ended up present on disk (either
+    freshly downloaded OR already there as a skip). Useful for callers that
+    want to register those IDs in a watched playlist's downloaded_ids.
+    """
     emit({"type": "start", "name": name, "total": len(tracks)})
 
     downloaded = skipped = failed = 0
     failed_tracks = []
+    have_ids: list = []
 
     def _process(track: dict):
         nonlocal downloaded, skipped, failed
-        emit({"type": "track_start",
+        tid = track.get("id")
+        emit({"type": "track_start", "id": tid,
               "artist": track["artist"], "title": track["title"]})
 
         track_dir = output_dir
@@ -256,18 +263,20 @@ def _download_tracks(tracks: list, output_dir: str, quality: str,
         path = download_track(track, track_dir, quality, cookies_browser=browser)
         if path == SKIP:
             skipped += 1
-            emit({"type": "track_done", "status": "skip",
+            if tid: have_ids.append(tid)
+            emit({"type": "track_done", "status": "skip", "id": tid,
                   "artist": track["artist"], "title": track["title"]})
         elif path is None:
             failed += 1
             failed_tracks.append(track)
-            emit({"type": "track_done", "status": "fail",
+            emit({"type": "track_done", "status": "fail", "id": tid,
                   "artist": track["artist"], "title": track["title"]})
         else:
             tag_file(path, track)
             analysis = analyze_and_tag(path)
             downloaded += 1
-            emit({"type": "track_done", "status": "ok",
+            if tid: have_ids.append(tid)
+            emit({"type": "track_done", "status": "ok", "id": tid,
                   "artist": track["artist"], "title": track["title"], "path": path,
                   "bpm": analysis.get("bpm"), "key": analysis.get("key"),
                   "camelot": analysis.get("camelot")})
@@ -288,6 +297,7 @@ def _download_tracks(tracks: list, output_dir: str, quality: str,
           "skipped": skipped, "failed": failed,
           "failed_tracks": [{"artist": t["artist"], "title": t["title"]}
                             for t in failed_tracks]})
+    return have_ids
 
 
 @app.post("/api/download")
@@ -346,6 +356,68 @@ async def start_download_tracks(req: DownloadTracksRequest):
 
     loop.run_in_executor(_executor, _run)
     return {"job_id": job_id}
+
+
+class DownloadToWatchedRequest(BaseModel):
+    playlist_url: str
+    track_ids:    list[str]
+    quality:      str = DEFAULT_QUALITY
+    browser:      Optional[str] = None
+    jobs:         int = 4
+
+
+@app.post("/api/download-to-watched")
+async def start_download_to_watched(req: DownloadToWatchedRequest):
+    """Download tracks into a specific watched playlist's folder.
+
+    On success, each downloaded (or already-present) track ID is added to
+    that playlist's downloaded_ids, so the watcher won't try to re-download
+    them on the next poll.
+    """
+    config = load_watched()
+    entry  = next((p for p in config["playlists"]
+                   if p["url"] == req.playlist_url), None)
+    if not entry:
+        raise HTTPException(status_code=404, detail="Watched playlist not found")
+
+    folder = entry["folder"]
+    pl_name = entry["name"]
+
+    loop = asyncio.get_running_loop()
+    job_id, queue = _new_job(loop)
+    emit = _emitter(queue, loop)
+
+    def _run():
+        try:
+            tracks = get_tracks_by_ids(req.track_ids)
+            if not tracks:
+                emit({"type": "error", "message": "No valid tracks resolved from IDs"})
+                return
+
+            have_ids = _download_tracks(
+                tracks, folder, req.quality, False, req.browser, req.jobs, emit,
+                name=f"→ {pl_name}",
+            )
+
+            # Register tracks in the playlist's downloaded_ids
+            if have_ids:
+                cfg = load_watched()
+                for e in cfg["playlists"]:
+                    if e["url"] == req.playlist_url:
+                        merged = set(e.get("downloaded_ids", [])) | set(have_ids)
+                        e["downloaded_ids"] = list(merged)
+                        break
+                from core.watcher import save_watched
+                save_watched(cfg)
+                emit({"type": "watched_updated",
+                      "playlist": pl_name, "added_ids": len(have_ids)})
+        except Exception as e:
+            emit({"type": "error", "message": str(e)})
+        finally:
+            emit(None)
+
+    loop.run_in_executor(_executor, _run)
+    return {"job_id": job_id, "playlist": pl_name, "folder": folder}
 
 
 # ── Trending ──────────────────────────────────────────────────────────────────
